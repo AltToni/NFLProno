@@ -185,6 +185,20 @@ h3 {
 	border-color: #3d3577;
 }
 
+/* Etat du systeme. Le libelle textuel accompagne toujours la couleur. */
+.badge--sain {
+	color: var(--accent);
+	border-color: var(--accent-dim);
+}
+.badge--attention {
+	color: var(--warn);
+	border-color: #5a4520;
+}
+.badge--probleme {
+	color: var(--danger);
+	border-color: #5a2530;
+}
+
 .day-heading {
 	margin: 1.5rem 0 0.5rem;
 	font-size: 0.8rem;

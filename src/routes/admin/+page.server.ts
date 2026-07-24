@@ -11,6 +11,7 @@ import { runSnapshot } from '$lib/server/sync';
 import { recomputeSeason } from '$lib/server/results';
 import { backupDatabase } from '$lib/server/backup';
 import { listWeeks } from '$lib/server/weeks';
+import { etatSysteme } from '$lib/server/health';
 
 export const load: PageServerLoad = async () => {
 	return {
@@ -33,7 +34,8 @@ export const load: PageServerLoad = async () => {
 		tasks: taskStatuses(),
 		runs: recentRuns(20),
 		weeks: listWeeks(),
-		season: currentSeason()
+		season: currentSeason(),
+		etat: etatSysteme()
 	};
 };
 

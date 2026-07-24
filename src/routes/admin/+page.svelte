@@ -1,8 +1,17 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { formatDateTime } from '$lib/time';
+	import { depuis, formatDateTime } from '$lib/time';
 
 	let { data, form } = $props();
+
+	// Le mot est affiche a cote de la couleur : la gravite ne doit pas se lire
+	// uniquement au vert/orange/rouge.
+	const GRAVITE_MOT = { ok: 'ok', attention: 'attention', probleme: 'probleme' };
+	const GRAVITE_CLASSE = {
+		ok: 'badge--sain',
+		attention: 'badge--attention',
+		probleme: 'badge--probleme'
+	};
 
 	const groups = $derived.by(() => {
 		const map = new Map<string, typeof data.settings>();
@@ -29,6 +38,64 @@
 {#if form?.error}
 	<div class="alert alert--error small">{form.error}</div>
 {/if}
+
+<!-- ------------------------------------------------------------------ -->
+<div class="card">
+	<h2>
+		Etat du systeme
+		<span class="badge {GRAVITE_CLASSE[data.etat.gravite]}">{GRAVITE_MOT[data.etat.gravite]}</span>
+	</h2>
+	<p class="small muted">
+		{data.etat.enSaison
+			? 'En saison : les seuils de fraicheur sont actifs.'
+			: 'Hors saison : l’absence de snapshot et de poll est normale, elle n’est pas signalee.'}
+	</p>
+
+	<div class="table-wrap">
+		<table>
+			<thead>
+				<tr>
+					<th>Indicateur</th>
+					<th>Etat</th>
+					<th>Quand</th>
+					<th>Detail</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.etat.indicateurs as indicateur (indicateur.cle)}
+					<tr>
+						<td>{indicateur.libelle}</td>
+						<td>
+							<span class="badge {GRAVITE_CLASSE[indicateur.gravite]}">
+								{GRAVITE_MOT[indicateur.gravite]}
+							</span>
+						</td>
+						<td title={indicateur.horodatage ? formatDateTime(indicateur.horodatage) : ''}>
+							{depuis(indicateur.horodatage, data.etat.horodatage)}
+						</td>
+						<td class="small muted">{indicateur.detail}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+
+	{#if data.etat.erreursCron.length > 0}
+		<h3 class="small" style="margin:1rem 0 0.4rem">Echecs non rattrapes</h3>
+		<ul class="small">
+			{#each data.etat.erreursCron as echec (echec.startedAt + echec.name)}
+				<li>
+					<strong>{echec.libelle}</strong> — {formatDateTime(echec.startedAt)}
+					<div class="muted">{echec.message ?? 'sans message'}</div>
+				</li>
+			{/each}
+		</ul>
+		<p class="tiny muted">
+			Une tache disparait de cette liste des qu'elle reussit a nouveau : ce qui reste ici n'a
+			pas ete rattrape tout seul.
+		</p>
+	{/if}
+</div>
 
 <!-- ------------------------------------------------------------------ -->
 <div class="card">

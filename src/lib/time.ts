@@ -93,3 +93,22 @@ export function formatCountdown(seconds: number): string {
 	if (m > 0) return `${m} min ${String(s).padStart(2, '0')} s`;
 	return `${s} s`;
 }
+
+/**
+ * Age lisible d'un horodatage : « il y a 3 h 20 », « il y a 2 jours »,
+ * « jamais ». Utilise cote serveur pour l'etat systeme et cote composant pour
+ * l'affichage, d'ou sa place ici plutot que dans un module serveur.
+ */
+export function depuis(epochSeconds: number | null, reference: number = now()): string {
+	if (epochSeconds === null) return 'jamais';
+	const delta = Math.max(0, reference - epochSeconds);
+	if (delta < 60) return "a l'instant";
+	if (delta < 3600) return `il y a ${Math.floor(delta / 60)} min`;
+	if (delta < 86400) {
+		const h = Math.floor(delta / 3600);
+		const m = Math.floor((delta % 3600) / 60);
+		return m ? `il y a ${h} h ${String(m).padStart(2, '0')}` : `il y a ${h} h`;
+	}
+	const j = Math.floor(delta / 86400);
+	return j === 1 ? 'il y a 1 jour' : `il y a ${j} jours`;
+}
