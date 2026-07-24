@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    image: nfl-pronos:latest
+    container_name: nfl-pronos
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/data/nfl.db
+      - BACKUP_DIR=/backup
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - db-data:/data
+      # Monter ici un second disque / partage reseau pour sortir les sauvegardes
+      # de la machine (cf. section Sauvegardes du README).
+      - ./backup:/backup
+
+volumes:
+  db-data:
