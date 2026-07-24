@@ -164,6 +164,30 @@ jobs:
           echo "--- migrations et compte admin"
           docker compose -f $COMPOSE logs app | grep -E "migration|administrateur|Application prete"
 
+      - name: Verifier qu'un formulaire est accepte
+        # Regression : sans ORIGIN, adapter-node reconstitue l'origine en http://
+        # depuis l'en-tete Host et la verification CSRF rejette *tous* les
+        # formulaires en 403. Un GET ne le voit pas, seul un POST le montre.
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST 'http://127.0.0.1:3000/connexion?/lien' \
+            -H 'Origin: http://localhost:3000' \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data 'email=ci@example.invalid')
+          echo "POST /connexion?/lien -> $code"
+          [ "$code" = 403 ] && { echo "::error::CSRF rejette les formulaires : ORIGIN est-il defini ?"; exit 1; }
+          [ "$code" = 200 ] || { echo "::error::attendu 200, obtenu $code"; exit 1; }
+
+      - name: Verifier les en-tetes de securite
+        run: |
+          entetes=$(curl -s -D - -o /dev/null http://127.0.0.1:3000/connexion)
+          echo "$entetes" | grep -qi '^content-security-policy:' || { echo "::error::CSP absent"; exit 1; }
+          echo "$entetes" | grep -qi "^content-security-policy:.*frame-ancestors 'none'" \
+            || { echo "::error::frame-ancestors manquant"; exit 1; }
+          echo "$entetes" | grep -qi '^x-content-type-options: nosniff' || { echo "::error::nosniff absent"; exit 1; }
+          echo "$entetes" | grep -qi '^referrer-policy:' || { echo "::error::Referrer-Policy absent"; exit 1; }
+          echo "$entetes" | grep -iE '^(content-security-policy|x-|referrer-policy|permissions-policy)'
+
       - name: Journal du conteneur
         if: always()
         run: docker compose -f $COMPOSE logs --tail=60 app || true

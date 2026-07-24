@@ -42,6 +42,12 @@ services:
       TZ: Europe/Brussels
       DATABASE_PATH: /data/nfl.db
       BACKUP_DIR: /backup
+      # adapter-node en a besoin pour reconstituer l'URL publique. Sans lui, il
+      # deduit l'origine de l'en-tete Host recu du reverse proxy — donc en
+      # http:// — alors que le navigateur annonce https:// : la verification
+      # CSRF echoue et **tous les formulaires renvoient 403**. Le `:?` fait
+      # echouer le demarrage plutot que de laisser passer une pile muette.
+      ORIGIN: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL doit etre defini dans .env}
 
     # Jamais expose directement : un reverse proxy (Caddy, Cloudflare Tunnel)
     # termine le TLS devant. Cf. README section 6.
