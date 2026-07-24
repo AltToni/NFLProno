@@ -1,0 +1,5 @@
+# Les scripts d exploitation tournent sur Linux : jamais de CRLF.
+*.sh text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
+scripts/systemd/* text eol=lf
