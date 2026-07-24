@@ -95,9 +95,12 @@ mkdir -p "$BACKUP_ROOT"
 
 if docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; then
 	log "copie de securite de la base actuelle"
-	docker exec "$CONTAINER" sqlite3 /data/nfl.db ".backup '/backup/avant-restauration-$STAMP.db'" \
-		&& log "base actuelle sauvegardee dans $(basename "$SAFETY")" \
-		|| log "AVERTISSEMENT : copie de securite impossible, on continue"
+	if docker exec "$CONTAINER" sqlite3 /data/nfl.db \
+		".backup '/backup/avant-restauration-$STAMP.db'"; then
+		log "base actuelle sauvegardee dans $(basename "$SAFETY")"
+	else
+		log "AVERTISSEMENT : copie de securite impossible, on continue"
+	fi
 fi
 
 # --- Remplacement -----------------------------------------------------------
