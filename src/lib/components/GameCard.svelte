@@ -15,11 +15,25 @@
 		saved?: boolean;
 	} = $props();
 
-	let side = $state<'home' | 'away' | null>(game.pick?.pickSide ?? null);
-	let homeScore = $state<number | null>(game.pick?.scoreHomePred ?? null);
-	let awayScore = $state<number | null>(game.pick?.scoreAwayPred ?? null);
+	let side = $state<'home' | 'away' | null>(null);
+	let homeScore = $state<number | null>(null);
+	let awayScore = $state<number | null>(null);
 	let saving = $state(false);
 	let justSaved = $state(false);
+
+	/**
+	 * Les champs suivent le pronostic renvoye par le serveur : initialisation au
+	 * montage, puis resynchronisation apres chaque `update()` de use:enhance, un
+	 * verrouillage ou une correction admin. L'effet ne depend que de `game.pick`
+	 * (les ecritures ne creent pas de dependance), donc la saisie en cours n'est
+	 * jamais ecrasee tant que le serveur ne renvoie pas autre chose.
+	 */
+	$effect(() => {
+		const pick = game.pick;
+		side = pick?.pickSide ?? null;
+		homeScore = pick?.scoreHomePred ?? null;
+		awayScore = pick?.scoreAwayPred ?? null;
+	});
 
 	const editable = $derived(!game.locked && !game.neutralized);
 	const finished = $derived(game.status === 'final');

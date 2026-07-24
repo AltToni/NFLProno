@@ -28,7 +28,7 @@ export function upsertGames(weekId: number, espnGames: EspnGame[]): number {
 	const ts = now();
 	let count = 0;
 
-	const tx = db.transaction(() => {
+	db.transaction(() => {
 		for (const g of espnGames) {
 			const existing = db.select().from(games).where(eq(games.id, g.id)).get();
 			const neutralized = g.status === 'postponed' || g.status === 'canceled' ? 1 : 0;
@@ -93,7 +93,6 @@ export function upsertGames(weekId: number, espnGames: EspnGame[]): number {
 			count++;
 		}
 	});
-	tx();
 
 	return count;
 }
@@ -150,7 +149,7 @@ export async function runSnapshot(
 	let snapshotsSkipped = 0;
 	const fallbacks: string[] = [];
 
-	const tx = db.transaction(() => {
+	db.transaction(() => {
 		for (const g of enriched) {
 			const existing = db.select().from(oddsSnapshots).where(eq(oddsSnapshots.gameId, g.id)).get();
 			if (existing && !options.force) {
@@ -193,7 +192,6 @@ export async function runSnapshot(
 			.where(eq(weeks.id, weekRow.id))
 			.run();
 	});
-	tx();
 
 	// Trace brute du scoreboard pour l'audit du bareme.
 	logger.info(

@@ -5,8 +5,10 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
-		adapter: adapter({ out: 'build' }),
-		csrf: { checkOrigin: true }
+		// La verification d'origine CSRF est active par defaut depuis SvelteKit 2 ;
+		// derriere un reverse proxy qui reecrit l'origine, ajouter ici
+		// `csrf: { trustedOrigins: [PUBLIC_BASE_URL] }`.
+		adapter: adapter({ out: 'build' })
 	}
 };
 

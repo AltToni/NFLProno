@@ -180,7 +180,7 @@ export function redeemInvite(code: string, email: string, pseudo: string): Redee
 	const ts = now();
 	let created: User | undefined;
 
-	const tx = db.transaction(() => {
+	db.transaction(() => {
 		db.insert(users)
 			.values({ pseudo: cleanPseudo, email: cleanEmail, role: 'joueur', createdAt: ts })
 			.run();
@@ -191,7 +191,6 @@ export function redeemInvite(code: string, email: string, pseudo: string): Redee
 			.where(eq(invites.id, invite.id))
 			.run();
 	});
-	tx();
 
 	return { ok: true, user: created };
 }

@@ -73,7 +73,7 @@ export function computeGameScores(
 	const multiplier = week ? playoffMultiplier(week.seasontype, week.number, cfg) : 1;
 	const gamePicks = db.select().from(picks).where(eq(picks.gameId, gameId)).all();
 
-	const tx = db.transaction(() => {
+	db.transaction(() => {
 		db.delete(scores).where(eq(scores.gameId, gameId)).run();
 
 		for (const pick of gamePicks) {
@@ -107,7 +107,6 @@ export function computeGameScores(
 			report.picksScored++;
 		}
 	});
-	tx();
 
 	report.gamesScored++;
 	return report;
