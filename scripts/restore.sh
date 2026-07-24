@@ -70,14 +70,17 @@ esac
 [ -s "$CANDIDATE" ] || die "la sauvegarde est vide apres decompression"
 
 # --- Verification avant toute destruction -----------------------------------
+# Les conteneurs utilitaires tournent en root (`--user root`) : l'image demarre
+# normalement en uid 1000, qui ne peut ni lire ce repertoire temporaire cree par
+# root en mode 700, ni faire le chown du remplacement plus bas.
 log "controle d'integrite de la sauvegarde"
-RESULT="$(docker run --rm -v "$WORK:/x" "$IMAGE" \
+RESULT="$(docker run --rm --user root -v "$WORK:/x" "$IMAGE" \
 	sqlite3 /x/restauration.db 'PRAGMA integrity_check;' | head -1)"
 [ "$RESULT" = "ok" ] || die "sauvegarde corrompue : integrity_check a repondu « $RESULT »"
 
-USERS="$(docker run --rm -v "$WORK:/x" "$IMAGE" sqlite3 /x/restauration.db \
+USERS="$(docker run --rm --user root -v "$WORK:/x" "$IMAGE" sqlite3 /x/restauration.db \
 	'select count(*) from users;' 2>/dev/null || echo '?')"
-PICKS="$(docker run --rm -v "$WORK:/x" "$IMAGE" sqlite3 /x/restauration.db \
+PICKS="$(docker run --rm --user root -v "$WORK:/x" "$IMAGE" sqlite3 /x/restauration.db \
 	'select count(*) from picks;' 2>/dev/null || echo '?')"
 log "integrite ok — $USERS joueur(s), $PICKS pronostic(s) dans cette sauvegarde"
 
@@ -111,7 +114,7 @@ docker stop "$CONTAINER" > /dev/null
 # place, SQLite rejouerait par-dessus la base restauree un journal qui ne lui
 # correspond pas. C'est le piege classique de la restauration en mode WAL.
 log "remplacement de la base dans le volume $VOLUME"
-docker run --rm -v "$VOLUME:/data" -v "$WORK:/x" "$IMAGE" sh -c '
+docker run --rm --user root -v "$VOLUME:/data" -v "$WORK:/x" "$IMAGE" sh -c '
 	set -e
 	rm -f /data/nfl.db /data/nfl.db-wal /data/nfl.db-shm
 	cp /x/restauration.db /data/nfl.db
