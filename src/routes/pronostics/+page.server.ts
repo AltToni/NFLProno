@@ -37,6 +37,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	};
 };
 
+/** Champ de score : entier explicite, ou null si absent, vide ou mal forme. */
+function parseScore(raw: FormDataEntryValue | null): number | null {
+	if (typeof raw !== 'string') return null;
+	const trimmed = raw.trim();
+	if (!/^\d+$/.test(trimmed)) return null;
+	return Number(trimmed);
+}
+
 export const actions: Actions = {
 	pronostic: async ({ request, locals }) => {
 		const user = requireUser(locals);
@@ -44,11 +52,22 @@ export const actions: Actions = {
 
 		const gameId = String(form.get('gameId') ?? '');
 		const pickSide = String(form.get('pickSide') ?? '');
-		const scoreHomePred = Number(form.get('scoreHomePred'));
-		const scoreAwayPred = Number(form.get('scoreAwayPred'));
+
+		/**
+		 * `Number(null)` et `Number('')` valent 0, et 0-0 est un pronostic valide
+		 * (nul predit). Sans ce controle, un envoi sans les cases de score — le
+		 * chemin sans JavaScript, notamment — enregistrerait silencieusement un
+		 * pari sur le match nul a la place du pronostic du joueur.
+		 */
+		const scoreHomePred = parseScore(form.get('scoreHomePred'));
+		const scoreAwayPred = parseScore(form.get('scoreAwayPred'));
 
 		if (pickSide !== 'home' && pickSide !== 'away') {
 			return fail(400, { gameId, error: 'Choisis une equipe avant d’enregistrer.' });
+		}
+
+		if (scoreHomePred === null || scoreAwayPred === null) {
+			return fail(400, { gameId, error: 'Renseigne les deux scores avant d’enregistrer.' });
 		}
 
 		try {

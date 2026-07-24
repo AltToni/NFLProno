@@ -171,6 +171,7 @@
 				name="scoreAwayPred"
 				min="0"
 				max="99"
+				required
 				inputmode="numeric"
 				placeholder="—"
 				disabled={!editable}
@@ -183,6 +184,7 @@
 				name="scoreHomePred"
 				min="0"
 				max="99"
+				required
 				inputmode="numeric"
 				placeholder="—"
 				disabled={!editable}

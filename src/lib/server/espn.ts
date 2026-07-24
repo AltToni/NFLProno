@@ -250,14 +250,36 @@ export function parseScoreboard(payload: any): EspnScoreboard {
 // API publique
 // ---------------------------------------------------------------------------
 
+/**
+ * Selection de la saison : c'est `dates` qui la porte, **pas** `year`.
+ * Verifie sur l'API en juillet 2026 : `year=2026&week=1&seasontype=2` renvoie la
+ * semaine 1 de 2025 (la reponse s'auto-declare `season.year = 2025`), alors que
+ * `dates=2026` renvoie bien 2026. `season=` est ignore de la meme facon. Passer
+ * `year` par-dessus est sans effet mais reste lisible cote journal.
+ */
+export function scoreboardUrl(year: number, seasontype: number, week: number): string {
+	return `${SITE_API}/scoreboard?dates=${year}&week=${week}&seasontype=${seasontype}&year=${year}&limit=400`;
+}
+
 export async function getScoreboard(
 	year: number,
 	seasontype: number,
 	week: number
 ): Promise<{ parsed: EspnScoreboard; raw: unknown }> {
-	const url = `${SITE_API}/scoreboard?week=${week}&seasontype=${seasontype}&year=${year}&limit=400`;
+	const url = scoreboardUrl(year, seasontype, week);
 	const raw = await fetchJson(url);
-	return { parsed: parseScoreboard(raw), raw };
+	const parsed = parseScoreboard(raw);
+
+	// ESPN peut renvoyer une autre saison que celle demandee (cf. scoreboardUrl).
+	// On refuse plutot que de figer un bareme sur le mauvais calendrier.
+	if (parsed.season !== 0 && parsed.season !== year) {
+		throw new Error(
+			`ESPN a renvoye la saison ${parsed.season} alors que ${year} etait demandee ` +
+				`(type ${seasontype}, semaine ${week})`
+		);
+	}
+
+	return { parsed, raw };
 }
 
 /** Semaine courante selon ESPN (le scoreboard sans parametre la renvoie). */

@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { extractOdds, parseAmerican, parseScoreboard } from './espn';
+import { extractOdds, parseAmerican, parseScoreboard, scoreboardUrl } from './espn';
+
+describe('scoreboardUrl', () => {
+	/**
+	 * Regression : `year=2026&week=1&seasontype=2` renvoyait la semaine 1 de 2025.
+	 * Seul `dates` selectionne reellement la saison chez ESPN.
+	 */
+	it('porte la saison sur dates, pas seulement sur year', () => {
+		const url = scoreboardUrl(2026, 2, 1);
+		expect(url).toContain('dates=2026');
+		expect(url).toContain('week=1');
+		expect(url).toContain('seasontype=2');
+	});
+});
 
 describe('parseAmerican', () => {
 	it('accepte nombres et chaines', () => {

@@ -4,6 +4,7 @@ import { games, oddsSnapshots, weeks } from './db/schema';
 import { enrichOdds, getCurrentPeriod, getScoreboard, type EspnGame } from './espn';
 import { getScoringConfig, currentSeason } from './settings';
 import { stakesFromMoneylines } from '$lib/scoring';
+import { SEASONTYPE_PLAYOFFS, SEASONTYPE_REGULAR } from '$lib/nfl';
 import { ensureWeek } from './weeks';
 import { logger } from './logger';
 import { now } from '$lib/time';
@@ -130,6 +131,19 @@ export async function runSnapshot(
 
 	if (!Number.isFinite(week) || week < 1) {
 		throw new Error('Impossible de determiner la semaine courante depuis ESPN');
+	}
+
+	// Garde-fou presaison : `weekLabel()` ne connait que les types 2 et 3. Un
+	// snapshot en aout, quand ESPN bascule sur `seasontype = 1`, creerait une
+	// « Semaine 3 » de presaison indistinguable de la semaine 3 reguliere dans
+	// les classements. Le jeu ne porte que sur la saison reguliere et les
+	// playoffs : on refuse plutot que de polluer la base.
+	if (seasontype !== SEASONTYPE_REGULAR && seasontype !== SEASONTYPE_PLAYOFFS) {
+		throw new Error(
+			`Snapshot refuse : ESPN annonce le type de saison ${seasontype} ` +
+				`(presaison ou hors-saison). Seuls la saison reguliere (2) et les playoffs (3) ` +
+				`sont pris en compte. Relance avec un type explicite si c'est volontaire.`
+		);
 	}
 
 	const { parsed, raw } = await getScoreboard(season, seasontype, week);

@@ -151,7 +151,8 @@ export function savePick(input: SavePickInput): void {
 export interface GameDetail {
 	game: typeof games.$inferSelect;
 	week: typeof weeks.$inferSelect | undefined;
-	odds: typeof oddsSnapshots.$inferSelect | undefined;
+	/** Sans `rawJson` : la trace brute ESPN sert a l'audit, elle reste au serveur. */
+	odds: Omit<typeof oddsSnapshots.$inferSelect, 'rawJson'> | undefined;
 	locked: boolean;
 	/** Vide tant que le match n'a pas commence (critere d'acceptation 6). */
 	entries: {
@@ -173,7 +174,15 @@ export function gameDetail(gameId: string): GameDetail | null {
 	if (!game) return null;
 
 	const week = db.select().from(weeks).where(eq(weeks.id, game.weekId)).get();
-	const odds = db.select().from(oddsSnapshots).where(eq(oddsSnapshots.gameId, gameId)).get();
+	const oddsRow = db.select().from(oddsSnapshots).where(eq(oddsSnapshots.gameId, gameId)).get();
+
+	// `rawJson` reste au serveur : ~4 ko de charge utile bookmaker par match,
+	// jamais lue cote client, qui partait jusqu'ici dans chaque page.
+	let odds: GameDetail['odds'];
+	if (oddsRow) {
+		const { rawJson: _auditOnly, ...rest } = oddsRow;
+		odds = rest;
+	}
 	const locked = now() >= game.kickoffUtc;
 
 	if (!locked) {
