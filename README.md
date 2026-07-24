@@ -29,11 +29,16 @@ demarrage. C'est lui qui emet les premieres invitations depuis `/admin`.
 
 ### Avec Docker
 
+Build local (`docker-compose.yml`) :
+
 ```bash
 cp .env.example .env
 docker compose up -d --build
 docker compose logs -f app     # le magic link initial y apparait si SMTP absent
 ```
+
+En production, on ne construit pas : on tire l'image publiee par la CI. Voir
+la section 6.
 
 L'application ecoute sur `127.0.0.1:3000` ; la base vit dans le volume
 `db-data`, les sauvegardes dans `./backup`.
@@ -197,6 +202,32 @@ src/
 
 ## 6. Deploiement
 
+### Image et mise en route
+
+Chaque push sur `main` publie l'image sur GHCR apres passage des tests
+(`.github/workflows/image.yml`). Deux tags : `latest`, et `sha-<commit>` qui est
+immuable — **c'est celui qu'il faut epingler pendant la saison**, `latest`
+bougeant au prochain push.
+
+```bash
+docker login ghcr.io -u AltToni          # PAT avec le scope read:packages
+cp .env.example .env && $EDITOR .env
+mkdir -p backup && sudo chown 1000:1000 backup   # le conteneur ecrit en uid 1000
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Mise a jour :
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Le compose derive `ORIGIN` de `PUBLIC_BASE_URL` et refuse de demarrer si elle
+manque. Ce n'est pas cosmetique : sans `ORIGIN`, adapter-node reconstitue
+l'origine en `http://` depuis l'en-tete `Host` du reverse proxy, la
+verification CSRF echoue et **tous les formulaires renvoient 403**.
+
 ### Derriere un reverse proxy (serveur maison)
 
 `Caddyfile` :
@@ -224,16 +255,56 @@ de 25 utilisateurs et d'un appel ESPN toutes les 15 minutes.
 
 ### Sauvegardes
 
-Le cron quotidien ecrit une copie coherente dans `BACKUP_DIR`. Monter ce
-repertoire sur un **second disque** ou un partage distant :
+Deux mecanismes independants, decrits en detail dans `scripts/README.md` :
 
-```yaml
-volumes:
-  - /mnt/disque2/pronos-backup:/backup
+| | Ecrit dans | Retention | Sort de la machine |
+|---|---|---|---|
+| Cron interne (`VACUUM INTO`) | `backup/nfl-*.db` | `BACKUP_KEEP` (14) | non |
+| `scripts/backup.sh` (`sqlite3 .backup`) | `backup/nocturne/*.db.gz` | `KEEP_DAYS` (30) | oui, via `REMOTE_TARGET` |
+
+Seul le second protege d'une panne disque. Installation du timer :
+
+```bash
+sudo cp scripts/systemd/nflprono-backup.* /etc/systemd/system/
+sudo $EDITOR /etc/systemd/system/nflprono-backup.service   # renseigner REMOTE_TARGET
+sudo systemctl enable --now nflprono-backup.timer
 ```
 
-Restauration : arreter le conteneur, remplacer `/data/nfl.db` par le fichier de
-sauvegarde, redemarrer.
+Restauration — **ne pas copier le fichier a la main** : `nfl.db-wal` et
+`nfl.db-shm` doivent disparaitre avec la base, sinon SQLite rejoue par-dessus
+un journal qui ne lui correspond plus.
+
+```bash
+scripts/restore.sh --latest
+```
+
+Le script verifie l'integrite de la sauvegarde avant de toucher a quoi que ce
+soit et met la base courante de cote. L'aller-retour est teste a chaque push.
+
+### Securite
+
+- CSP, `nosniff`, `frame-ancestors 'none'`, `Referrer-Policy`,
+  `Permissions-Policy`, et HSTS des que `PUBLIC_BASE_URL` est en `https://`.
+- Limitation de debit sur les magic links (3 par email et 10 par IP par quart
+  d'heure) et sur l'echange de codes d'invitation (10 par IP et par heure).
+  Compteurs **en memoire** : ils repartent de zero a chaque redemarrage, ce qui
+  est acceptable pour ce qu'ils protegent, et serait a revoir si l'application
+  passait a plusieurs instances.
+- Logs JSON en production (`LOG_FORMAT=texte` pour forcer le format lisible).
+  Le journal des requetes n'enregistre pas la chaine de requete :
+  `/connexion/verifier` porte le jeton de connexion dans l'URL.
+
+### Etat du systeme
+
+`/admin` ouvre sur une carte « Etat du systeme » : dernier snapshot de cotes,
+dernier poll de scores, derniere sauvegarde, echecs de taches non rattrapes.
+Les seuils sont contextuels — hors saison, l'absence de snapshot n'est pas
+signalee.
+
+`/api/health` sert la sonde de vivacite (200/503, c'est ce que suit Docker) et,
+pour un admin connecte uniquement, le detail de ces indicateurs. La fraicheur
+ne change jamais le code HTTP : sinon le conteneur redemarrerait en boucle
+chaque intersaison.
 
 ---
 

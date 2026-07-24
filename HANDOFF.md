@@ -91,14 +91,26 @@ Par ordre de criticité.
   16 matchs chacun, **aucun repli 50/50**.
 - ~~Garde-fou présaison~~ → implémenté dans `runSnapshot()`.
 
+### Fait le 24/07/2026 (session d'industrialisation)
+
+- ~~Déploiement Docker jamais testé~~ → image construite et publiée sur
+  `ghcr.io/alttoni/nflprono` à chaque push, compose de production démarré et
+  vérifié `healthy` en CI.
+- ~~Limitation de débit sur la demande de magic link~~ → 3 par email et 10 par
+  IP par quart d'heure.
+- Sauvegarde nocturne hôte + restauration, aller-retour testé à chaque push.
+- En-têtes de sécurité, logs structurés, page admin « état du système ».
+
 ### Avant l'ouverture aux joueurs
 
 1. **SMTP configuré et magic link testé de bout en bout.** Seul le mode « lien
-   écrit dans les logs » a été éprouvé.
-2. **Déploiement Docker jamais testé.** Le `Dockerfile` n'a pas été construit.
-   Attention : `better-sqlite3` se compile depuis les sources (§5, piège n°4).
-3. Icônes PNG réelles pour la PWA (actuellement SVG uniquement).
-4. Limitation de débit sur la demande de magic link (aucune actuellement).
+   écrit dans les logs » a été éprouvé. C'est le dernier vrai inconnu.
+2. **`REMOTE_TARGET` à renseigner** dans `/etc/systemd/system/nflprono-backup.service`.
+   Tant qu'il est vide, les sauvegardes restent sur le même disque que la base
+   et ne protègent de rien.
+3. **Une restauration réelle sur la machine de production**, une fois, à froid.
+   Le round-trip est testé en CI, jamais sur la vraie machine.
+4. Icônes PNG réelles pour la PWA (actuellement SVG uniquement).
 5. Durée de validité du jeton de rappel email (voir §5, piège n°6).
 
 ### Confort, non bloquant
@@ -431,3 +443,25 @@ d'acceptation. Neuf défauts trouvés et corrigés (commits `9edb9c8`, `597a678`
 Le barème lui-même n'a demandé **aucune correction** : les 31 tests de
 `scoring.ts` sont passés du premier coup, et les points calculés sur de vrais
 résultats 2025 correspondent à la spec.
+
+**24 juillet 2026 — industrialisation du déploiement.** CI GitHub Actions
+(tests → image GHCR → test de fumée du compose → aller-retour sauvegarde),
+compose de production, sauvegarde nocturne hôte et restauration, `/api/health`
+enrichi et carte « état du système », durcissement.
+
+Un défaut bloquant trouvé au passage, invisible en développement :
+
+> **`ORIGIN` manquant.** adapter-node reconstitue l'origine depuis l'en-tête
+> `Host` du reverse proxy, donc en `http://`, alors que le navigateur annonce
+> `https://`. La vérification CSRF échoue et **tous les formulaires renvoient
+> 403** — personne n'aurait pu se connecter ni pronostiquer. Le compose dérive
+> désormais `ORIGIN` de `PUBLIC_BASE_URL` et refuse de démarrer s'il manque.
+
+Il n'est sorti que parce que le test de fumée fait un POST : les `GET` et le
+healthcheck passaient tous. C'est la leçon de la session — un déploiement se
+teste sur une écriture, pas sur une page d'accueil.
+
+Deux ajustements de permissions ont aussi été nécessaires, tous deux dus au
+fait que le conteneur tourne en uid 1000 : le sous-répertoire `backup/nocturne`
+est créé depuis le conteneur, et les conteneurs utilitaires de restauration
+tournent en `--user root`.
