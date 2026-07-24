@@ -1,0 +1,90 @@
+# Compose de production : tire l'image depuis GHCR, ne construit rien.
+# Pour un build local, utiliser docker-compose.yml.
+#
+# Mise en route sur la machine cible :
+#
+#   docker login ghcr.io -u AltToni          # PAT avec le scope read:packages
+#   cp .env.example .env && $EDITOR .env     # cf. « Variables » plus bas
+#   mkdir -p backup && sudo chown 1000:1000 backup
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Mise a jour :
+#
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Variables lues depuis .env (obligatoires en production) :
+#
+#   AUTH_SECRET       >= 32 caracteres. Le changer deconnecte tout le monde et
+#                     invalide les magic links en vol.
+#   PUBLIC_BASE_URL   URL publique exacte, sans slash final. Si elle ne
+#                     correspond pas, les magic links pointeront ailleurs.
+#   ADMIN_EMAIL       compte admin cree au premier demarrage.
+#   SMTP_*            sans SMTP_HOST, les liens partent dans les logs.
+#   SEASON_YEAR       2026.
+#
+# Variables imposees ici, a ne pas mettre dans .env : NODE_ENV, DATABASE_PATH,
+# BACKUP_DIR, TZ. Elles decrivent l'interieur du conteneur.
+
+services:
+  app:
+    # IMAGE_TAG permet d'epingler une version precise :
+    #   IMAGE_TAG=sha-fa0166559541d9b6b65fe8252740ac9bce6b0546 docker compose -f ... up -d
+    # C'est ce qu'il faut faire pendant la saison : `latest` peut bouger sous
+    # les pieds au prochain push sur main.
+    image: ghcr.io/alttoni/nflprono:${IMAGE_TAG:-latest}
+    container_name: nfl-pronos
+    restart: unless-stopped
+
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      TZ: Europe/Brussels
+      DATABASE_PATH: /data/nfl.db
+      BACKUP_DIR: /backup
+
+    # Jamais expose directement : un reverse proxy (Caddy, Cloudflare Tunnel)
+    # termine le TLS devant. Cf. README section 6.
+    ports:
+      - '127.0.0.1:3000:3000'
+
+    volumes:
+      # Base : volume nomme, gere par Docker. Les sauvegardes passent par
+      # `docker exec`, pas par une lecture directe de ce volume.
+      - db-data:/data
+      # Sauvegardes : montage hote, pour que le script nocturne et rsync y
+      # accedent sans passer par Docker. Le conteneur tourne en uid 1000 :
+      # `sudo chown 1000:1000 backup` sinon les ecritures echouent.
+      - ./backup:/backup
+
+    healthcheck:
+      # Redondant avec le HEALTHCHECK de l'image, mais declare ici pour etre
+      # ajustable sans reconstruire.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    # Sans rotation, le fichier de log json-file grossit sans limite sur une
+    # saison entiere (un poll de scores toutes les 15 min).
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
+
+    # Laisse le temps aux crons en cours et a SQLite de fermer proprement.
+    stop_grace_period: 30s
+
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  db-data:
