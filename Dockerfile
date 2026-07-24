@@ -26,7 +26,9 @@ ENV PORT=3000
 ENV DATABASE_PATH=/data/nfl.db
 ENV BACKUP_DIR=/backup
 
-RUN apk add --no-cache tzdata tini \
+# sqlite : le client CLI, necessaire au `.backup` du script de sauvegarde de
+# l'hote (scripts/backup.sh l'appelle via docker exec). ~1,5 Mo.
+RUN apk add --no-cache tzdata tini sqlite \
 	&& mkdir -p /data /backup \
 	&& chown -R node:node /data /backup
 

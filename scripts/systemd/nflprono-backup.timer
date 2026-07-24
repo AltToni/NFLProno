@@ -1,0 +1,16 @@
+[Unit]
+Description=Sauvegarde nocturne de la base Pronos NFL
+
+[Timer]
+# 03:30, soit une heure avant la sauvegarde interne de l'application (04:30) :
+# les deux ne se marchent pas dessus et on garde deux mecanismes independants.
+OnCalendar=*-*-* 03:30:00
+
+# Si la machine etait eteinte a l'heure dite, rattrapage au demarrage.
+Persistent=true
+
+# Evite que toutes les machines d'un parc tapent le NAS a la seconde pres.
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

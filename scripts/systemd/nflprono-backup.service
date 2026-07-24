@@ -1,0 +1,29 @@
+[Unit]
+Description=Sauvegarde de la base Pronos NFL
+Documentation=file:///opt/nflprono/scripts/backup.sh
+# La sauvegarde n'a de sens que si Docker tourne.
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+
+# En root : le script compresse et purge des fichiers appartenant a uid 1000
+# (l'utilisateur du conteneur), et pilote Docker.
+User=root
+
+WorkingDirectory=/opt/nflprono
+ExecStart=/opt/nflprono/scripts/backup.sh
+
+# Adapter avant la saison. Sans REMOTE_TARGET, les sauvegardes restent sur le
+# meme disque que la base et ne protegent de rien.
+Environment=KEEP_DAYS=30
+# Environment=REMOTE_TARGET=nas:/volume1/pronos
+# Environment=REMOTE_TARGET=/mnt/nas/pronos
+
+# La sortie part dans le journal : `journalctl -u nflprono-backup`.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
