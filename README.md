@@ -228,6 +228,94 @@ manque. Ce n'est pas cosmetique : sans `ORIGIN`, adapter-node reconstitue
 l'origine en `http://` depuis l'en-tete `Host` du reverse proxy, la
 verification CSRF echoue et **tous les formulaires renvoient 403**.
 
+### Deploiement continu
+
+Le job `deployer` de `image.yml` prend la suite du `docker compose pull` fait a
+la main : connexion SSH au VPS, tirage de l'image, redemarrage du compose, puis
+le meme POST de connexion que le test de fumee mais **contre l'URL publique** —
+seule facon de verifier que le reverse proxy et `ORIGIN` s'accordent.
+
+Il ne part que sur un push sur `main` ou un declenchement manuel, et seulement
+apres les tests, la fumee et l'aller-retour de sauvegarde : une image cassee
+n'atteint pas plus la production que le registre.
+
+#### Une fois, sur le VPS
+
+```bash
+# 1. Repertoire cible. Il doit contenir docker-compose.prod.yml et .env,
+#    deposes par git clone ou scp (le depot est prive : pas de curl anonyme).
+sudo mkdir -p /opt/nfl-pronos && sudo chown "$USER" /opt/nfl-pronos
+cd /opt/nfl-pronos
+mkdir -p backup && sudo chown 1000:1000 backup
+
+# 2. L'utilisateur SSH doit pouvoir parler a Docker sans sudo.
+sudo usermod -aG docker "$USER"     # puis se reconnecter
+```
+
+Depuis ta machine :
+
+```bash
+# 3. Cle dediee au deploiement, sans passphrase.
+ssh-keygen -t ed25519 -f ~/.ssh/nflprono-deploy -C "github-actions" -N ""
+ssh-copy-id -i ~/.ssh/nflprono-deploy.pub deploy@le.vps.eu
+
+# 4. Empreinte du serveur, a coller telle quelle dans VPS_KNOWN_HOSTS.
+ssh-keyscan -p 22 le.vps.eu
+```
+
+#### Secrets et variables du depot
+
+_Settings → Secrets and variables → Actions._
+
+| Secret | Contenu |
+|---|---|
+| `VPS_HOST` | nom d'hote ou IP |
+| `VPS_USER` | utilisateur SSH, membre du groupe `docker` |
+| `VPS_SSH_KEY` | **cle privee** `~/.ssh/nflprono-deploy`, en entier, en-tetes `BEGIN`/`END` compris |
+| `VPS_KNOWN_HOSTS` | sortie de `ssh-keyscan` (etape 4). Facultatif, voir ci-dessous |
+
+| Variable | Defaut | Role |
+|---|---|---|
+| `PUBLIC_BASE_URL` | — | **obligatoire**, sans slash final |
+| `VPS_APP_DIR` | `/opt/nfl-pronos` | repertoire contenant le compose et le `.env` |
+| `VPS_PORT` | `22` | port SSH |
+
+`PUBLIC_BASE_URL` est une variable et non un secret : elle est publique par
+nature, et la voir dans les logs aide au diagnostic. Le job s'arrete des le
+premier pas si une entree obligatoire manque, en nommant celle qui manque —
+mieux vaut ca qu'une connexion SSH qui echoue trois etapes plus loin.
+
+**Sans `VPS_KNOWN_HOSTS`**, le job accepte l'empreinte qui se presente et le
+signale par un avertissement. Le deploiement marche, mais un intermediaire
+pourrait se faire passer pour le VPS et recuperer le contenu de la session.
+Le renseigner ferme cette porte.
+
+Le job declare l'environnement `production` : GitHub le cree tout seul au
+premier run, et il devient possible d'y exiger une approbation manuelle
+(_Settings → Environments → production → Required reviewers_).
+
+#### Ce que le job fait, et ne fait pas
+
+- **Il epingle `sha-<commit>`**, jamais `latest` : entre le build et le
+  deploiement, un autre push a pu deplacer `latest`. Le tag est ecrit dans le
+  `.env` du VPS pour qu'un `docker compose up -d` lance a la main plus tard
+  reparte sur la meme image. Le `.env` precedent est conserve en
+  `.env.avant-deploiement`.
+- **Il verifie apres coup** que le conteneur tourne bien sur le tag attendu :
+  un `pull` qui n'a rien fait passerait sinon inapercu.
+- **Il ne touche pas au `docker login` du VPS.** Il se connecte a GHCR dans un
+  `DOCKER_CONFIG` jetable : ecraser `~/.docker/config.json` avec le jeton du
+  job, qui expire a la fin du run, casserait les `docker compose pull` manuels.
+- **Il ne fait pas de retour arriere automatique.** Si le test public echoue,
+  la nouvelle version reste en place et le recapitulatif du run affiche la
+  commande a passer :
+
+  ```bash
+  cd /opt/nfl-pronos
+  cp .env.avant-deploiement .env
+  docker compose -f docker-compose.prod.yml up -d
+  ```
+
 ### Derriere un reverse proxy (serveur maison)
 
 `Caddyfile` :
@@ -318,6 +406,8 @@ chaque intersaison.
 | Recalculer tous les points | `/admin` → « Recalculer tous les points » |
 | Changer une constante du barème | `/admin` → Reglages, puis recalcul |
 | Voir l'etat des crons | `/admin` → Taches planifiees + Journal |
+| Redeployer sans pousser de code | Actions → « Image Docker » → Run workflow |
+| Revenir a la version precedente | cf. section 6, `.env.avant-deploiement` |
 
 Avant le coup d'envoi de la saison : figer les reglages du barème, lancer un
 snapshot de test sur la semaine 1, verifier les enjeux affiches, puis remettre
