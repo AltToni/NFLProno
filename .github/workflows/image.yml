@@ -300,3 +300,219 @@ jobs:
       - name: Arret et nettoyage
         if: always()
         run: docker compose -f $COMPOSE down -v || true
+
+  deployer:
+    name: Deploiement sur le VPS
+    runs-on: ubuntu-latest
+    # Rien ne part en production sans que la fumee et l'aller-retour de
+    # sauvegarde soient passes : c'est la meme logique qu'entre `verifier` et
+    # `publier`, une image cassee ne doit pas atteindre le VPS.
+    needs: [fumee, sauvegarde]
+    # Push sur main et declenchement manuel. Le `ref` est reverifie parce que
+    # workflow_dispatch accepte n'importe quelle branche : un essai lance depuis
+    # une branche ne doit pas se retrouver en production.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+
+    environment:
+      name: production
+      url: ${{ vars.PUBLIC_BASE_URL }}
+
+    # Deux deploiements simultanes se marcheraient dessus sur la meme machine.
+    # Sans annulation : un `compose up` interrompu laisse la pile a moitie a jour.
+    concurrency:
+      group: deploiement-production
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      # Le tag immuable qui vient de passer la fumee, jamais `latest` : entre le
+      # build et ce job, un autre push a pu deplacer `latest`.
+      IMAGE_TAG: sha-${{ github.sha }}
+      COMPOSE: docker-compose.prod.yml
+      APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/nfl-pronos' }}
+      BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+
+    steps:
+      - name: Verifier la configuration
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          manquant=
+          [ -n "$VPS_HOST" ] || manquant="$manquant secrets.VPS_HOST"
+          [ -n "$VPS_USER" ] || manquant="$manquant secrets.VPS_USER"
+          [ -n "$SSH_KEY" ]  || manquant="$manquant secrets.VPS_SSH_KEY"
+          [ -n "$BASE_URL" ] || manquant="$manquant vars.PUBLIC_BASE_URL"
+          if [ -n "$manquant" ]; then
+            echo "::error::configuration incomplete :$manquant"
+            exit 1
+          fi
+          # Un slash final donnerait des URL en `//api/health` et surtout un
+          # en-tete Origin qui ne correspondrait plus a ORIGIN cote conteneur.
+          case "$BASE_URL" in
+            */) echo "::error::vars.PUBLIC_BASE_URL ne doit pas finir par /"; exit 1 ;;
+          esac
+          echo "cible : $VPS_USER@***:$VPS_PORT  ->  $APP_DIR"
+          echo "url   : $BASE_URL"
+
+      - name: Preparer l'acces SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # Passage par une variable d'environnement plutot qu'une substitution
+          # directe dans le script : le shell n'a jamais a interpreter la cle.
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploiement
+          chmod 600 ~/.ssh/id_deploiement
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Sans empreinte connue d'avance, on fait confiance a celle qui se
+            # presente : un intermediaire pourrait se faire passer pour le VPS et
+            # recuperer le contenu de la session. Fermer la porte en renseignant
+            # VPS_KNOWN_HOSTS avec la sortie de `ssh-keyscan -p 22 le.vps.eu`.
+            echo "::warning::VPS_KNOWN_HOSTS absent : l'empreinte du serveur n'est pas verifiee."
+            ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" > ~/.ssh/known_hosts 2> /dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Tirer l'image et relancer le compose
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          # Le jeton est injecte en tete du script, pas en argument de ssh : il
+          # ne passe donc pas par la ligne de commande visible dans le `ps` du VPS.
+          {
+            printf "GHCR_TOKEN='%s'\n" "$GHCR_TOKEN"
+            cat <<'DISTANT'
+          cd "$APP_DIR"
+          test -f "$COMPOSE" || { echo "::error::$APP_DIR/$COMPOSE introuvable"; exit 1; }
+          test -f .env       || { echo "::error::$APP_DIR/.env introuvable"; exit 1; }
+
+          # Identifiants isoles dans un DOCKER_CONFIG jetable. Le VPS a deja un
+          # `docker login ghcr.io` avec un PAT durable (README section 6) : se
+          # connecter dans ~/.docker/config.json l'ecraserait par le jeton de ce
+          # job, qui expire a la fin du run, et le prochain `docker compose pull`
+          # lance a la main echouerait.
+          DOCKER_CONFIG=$(mktemp -d)
+          export DOCKER_CONFIG
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          echo "image en place avant deploiement : $(docker inspect -f '{{.Config.Image}}' nfl-pronos 2>/dev/null || echo aucune)"
+
+          # Epingle la version dans .env : un `docker compose up -d` lance a la
+          # main plus tard repart alors sur la meme image, et non sur `latest`.
+          # Reecriture par-dessus le fichier plutot qu'un `mv` : on garde l'inode,
+          # le proprietaire et les droits du .env existant, qui porte AUTH_SECRET.
+          cp -p .env .env.avant-deploiement
+          tampon=$(mktemp)
+          { grep -v '^IMAGE_TAG=' .env || true; echo "IMAGE_TAG=$IMAGE_TAG"; } > "$tampon"
+          cat "$tampon" > .env
+          rm -f "$tampon"
+
+          docker compose -f "$COMPOSE" pull
+          docker compose -f "$COMPOSE" up -d --remove-orphans
+
+          for i in $(seq 1 30); do
+            etat=$(docker inspect -f '{{.State.Health.Status}}' nfl-pronos 2>/dev/null || echo absent)
+            echo "tentative $i : $etat"
+            [ "$etat" = healthy ] && break
+            [ "$etat" = unhealthy ] && { echo "::error::le conteneur est unhealthy"; exit 1; }
+            sleep 5
+          done
+          [ "$(docker inspect -f '{{.State.Health.Status}}' nfl-pronos)" = healthy ] \
+            || { echo "::error::le conteneur n'est jamais devenu healthy"; exit 1; }
+
+          # `pull` peut ne rien faire sans le dire (image deja presente en local).
+          # On verifie donc que c'est bien la version attendue qui tourne.
+          en_place=$(docker inspect -f '{{.Config.Image}}' nfl-pronos)
+          echo "image deployee : $en_place"
+          case "$en_place" in
+            *":$IMAGE_TAG") ;;
+            *) echo "::error::le conteneur tourne sur $en_place, attendu ...:$IMAGE_TAG"; exit 1 ;;
+          esac
+          DISTANT
+          } | ssh -i ~/.ssh/id_deploiement -p "$VPS_PORT" \
+                -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+                "$VPS_USER@$VPS_HOST" \
+                "APP_DIR='$APP_DIR' COMPOSE='$COMPOSE' IMAGE_TAG='$IMAGE_TAG' GHCR_USER='$GHCR_USER' bash -euo pipefail -s"
+
+      - name: Attendre que l'URL publique reponde
+        # Le conteneur est healthy vu de l'interieur ; ce tour de boucle verifie
+        # le chemin complet, reverse proxy et TLS compris.
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 "$BASE_URL/api/health" | grep -q '"ok":true'; then
+              echo "sante publique : ok"
+              exit 0
+            fi
+            echo "tentative $i : pas encore"
+            sleep 5
+          done
+          echo "::error::$BASE_URL/api/health ne repond pas — reverse proxy ou DNS ?"
+          exit 1
+
+      - name: Verifier qu'un formulaire est accepte
+        # Meme controle que le job « fumee », mais contre l'URL publique : c'est
+        # la seule facon de voir que le reverse proxy et ORIGIN s'accordent. Sans
+        # ORIGIN correct, adapter-node reconstitue l'origine en http:// depuis
+        # l'en-tete Host recu du proxy et la verification CSRF rejette *tous* les
+        # formulaires en 403. Un GET ne le voit pas, seul un POST le montre.
+        #
+        # L'adresse n'existe pas et le TLD .invalid n'est pas routable : l'action
+        # repond la meme chose qu'un compte existe ou non, aucun mail ne part.
+        # Seuls les compteurs en memoire du rate limiter bougent, et ils viennent
+        # d'etre remis a zero par le redemarrage.
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+            -X POST "$BASE_URL/connexion?/lien" \
+            -H "Origin: $BASE_URL" \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data 'email=deploiement@example.invalid')
+          echo "POST /connexion?/lien -> $code"
+          [ "$code" = 403 ] && { echo "::error::CSRF rejette les formulaires : ORIGIN correspond-il a $BASE_URL ?"; exit 1; }
+          # 429 : la limite de debit a repondu, donc la requete avait deja franchi
+          # le controle CSRF — ce qu'on cherchait a savoir. Arrive a partir de
+          # quatre deploiements dans le meme quart d'heure.
+          [ "$code" = 429 ] && { echo "::warning::limite de debit atteinte ; le controle CSRF est neanmoins passe"; exit 0; }
+          [ "$code" = 200 ] || { echo "::error::attendu 200, obtenu $code"; exit 1; }
+
+      - name: Journal du conteneur
+        if: failure()
+        run: |
+          ssh -i ~/.ssh/id_deploiement -p "$VPS_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" \
+            "cd '$APP_DIR' && docker compose -f '$COMPOSE' logs --tail=60 app" || true
+
+      - name: Recapitulatif
+        if: always()
+        run: |
+          {
+            echo "### Deploiement"
+            echo ""
+            echo "- image : \`${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}\`"
+            echo "- cible : \`${APP_DIR}\` sur le VPS"
+            echo "- url : ${BASE_URL}"
+            echo ""
+            echo "Retour arriere, depuis \`${APP_DIR}\` sur le VPS :"
+            echo ""
+            echo '```bash'
+            echo "cp .env.avant-deploiement .env"
+            echo "docker compose -f ${COMPOSE} up -d"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Effacer la cle
+        if: always()
+        run: rm -f ~/.ssh/id_deploiement
