@@ -15,8 +15,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	return {
 		season: seasonStandings(),
 		weekly: week ? weekStandings(week.id) : [],
-		week: week ? { id: week.id, label: week.label, status: week.status } : null,
-		weeks: weeks.map((w) => ({ id: w.id, label: w.label })),
+		week: week
+			? { id: week.id, label: week.label, status: week.status, testKind: week.testKind }
+			: null,
+		weeks: weeks.map((w) => ({ id: w.id, label: w.label, testKind: w.testKind })),
 		evolution: rankEvolution()
 	};
 };

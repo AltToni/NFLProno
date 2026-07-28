@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3';
  * une seule fois et son numero est memorise dans `user_version`.
  */
 
-const MIGRATIONS: string[][] = [
+export const MIGRATIONS: string[][] = [
 	// --- v1 : schema initial ------------------------------------------------
 	[
 		`CREATE TABLE IF NOT EXISTS users (
@@ -152,6 +152,16 @@ const MIGRATIONS: string[][] = [
 			trigger TEXT NOT NULL DEFAULT 'cron'
 		)`,
 		`CREATE INDEX IF NOT EXISTS cron_runs_name_idx ON cron_runs (name, started_at)`
+	],
+
+	// --- v2 : semaines de test (rejeu historique et simulation) --------------
+	// Nullable sans defaut : toutes les semaines existantes deviennent donc de
+	// vraies semaines, ce qui est bien l'etat voulu apres migration.
+	[
+		`ALTER TABLE weeks ADD COLUMN test_kind TEXT`,
+		`ALTER TABLE weeks ADD COLUMN source_season INTEGER`,
+		`ALTER TABLE weeks ADD COLUMN source_seasontype INTEGER`,
+		`ALTER TABLE weeks ADD COLUMN source_number INTEGER`
 	]
 ];
 

@@ -185,6 +185,18 @@ h3 {
 	border-color: #3d3577;
 }
 
+/*
+ * Semaine de test. Volontairement la plus voyante des pastilles : elle doit se
+ * remarquer sans lire, pour qu'un classement ou une grille de bac a sable ne
+ * soit jamais pris pour la vraie saison.
+ */
+.badge--test {
+	color: var(--warn);
+	background: #3a2c12;
+	border-color: var(--warn);
+	letter-spacing: 0.06em;
+}
+
 /* Etat du systeme. Le libelle textuel accompagne toujours la couleur. */
 .badge--sain {
 	color: var(--accent);

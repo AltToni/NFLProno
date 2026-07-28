@@ -2,6 +2,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { db, sqlite } from './db';
 import { games, oddsSnapshots, picks, scores, users, weeks } from './db/schema';
 import { isPickConsistent, type PickSide } from '$lib/scoring';
+import { ignoreLeKickoff } from '$lib/nfl';
 import type { BoardGame } from '$lib/types';
 import { now } from '$lib/time';
 
@@ -10,6 +11,11 @@ export type { BoardGame } from '$lib/types';
 /** Grille de pronostics d'une semaine pour un joueur donne. */
 export function weekBoard(weekId: number, userId: number): BoardGame[] {
 	const ts = now();
+
+	// Sur une semaine de rejeu, les kickoffs sont ceux de la saison rejouee :
+	// tout serait verrouille d'entree et la grille ne serait pas saisissable.
+	const week = db.select({ testKind: weeks.testKind }).from(weeks).where(eq(weeks.id, weekId)).get();
+	const kickoffNeutralise = ignoreLeKickoff(week?.testKind);
 
 	const rows = db
 		.select({
@@ -51,7 +57,7 @@ export function weekBoard(weekId: number, userId: number): BoardGame[] {
 		scoreHome: game.scoreHome,
 		scoreAway: game.scoreAway,
 		neutralized: game.neutralized === 1,
-		locked: ts >= game.kickoffUtc,
+		locked: !kickoffNeutralise && ts >= game.kickoffUtc,
 		basePointsHome: odds?.basePointsHome ?? null,
 		basePointsAway: odds?.basePointsAway ?? null,
 		pHome: odds?.pHome ?? null,
@@ -95,7 +101,9 @@ export function savePick(input: SavePickInput): void {
 		throw new PickError("Les pronostics de cette semaine ne sont pas ouverts.");
 	}
 
-	if (now() >= game.kickoffUtc) {
+	// Meme exception que dans `weekBoard`, revalidee ici : le verrouillage est
+	// une regle serveur, l'interface ne fait que la refleter.
+	if (!ignoreLeKickoff(week.testKind) && now() >= game.kickoffUtc) {
 		throw new PickError('Le match a commence : ce pronostic est verrouille.');
 	}
 	if (game.neutralized === 1) {
@@ -183,6 +191,10 @@ export function gameDetail(gameId: string): GameDetail | null {
 		const { rawJson: _auditOnly, ...rest } = oddsRow;
 		odds = rest;
 	}
+	// Ici `locked` veut dire « les pronostics sont devoiles », pas « la saisie
+	// est fermee » comme dans `weekBoard` — d'ou l'absence d'exception pour le
+	// rejeu : ses kickoffs etant passes, ses pronostics sont visibles de tous,
+	// ce qui est sans consequence sur une semaine hors classement.
 	const locked = now() >= game.kickoffUtc;
 
 	if (!locked) {

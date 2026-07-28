@@ -58,6 +58,7 @@ L'application ecoute sur `127.0.0.1:3000` ; la base vit dans le volume
 | `SMTP_*` | Serveur d'envoi des magic links. Vide = logs |
 | `ADMIN_EMAIL`, `ADMIN_PSEUDO` | Compte admin cree au premier demarrage |
 | `CRON_*` | Surcharge des planifications ; `CRON_ENABLED=0` desactive l'ordonnanceur |
+| `MOCK_ESPN` | `1` active le mode simulation (section 7). Absente en production |
 
 Generer un secret :
 
@@ -318,24 +319,145 @@ chaque intersaison.
 | Recalculer tous les points | `/admin` → « Recalculer tous les points » |
 | Changer une constante du barème | `/admin` → Reglages, puis recalcul |
 | Voir l'etat des crons | `/admin` → Taches planifiees + Journal |
+| Rejouer une semaine passee | `/admin` → Outils de test |
+| Simuler une semaine en 30 min | `/admin` → Outils de test (`MOCK_ESPN=1`) |
+| Effacer les donnees de test | `/admin` → « Supprimer les semaines TEST » |
 
 Avant le coup d'envoi de la saison : figer les reglages du barème, lancer un
 snapshot de test sur la semaine 1, verifier les enjeux affiches, puis remettre
 les pronostics à zero si besoin.
+
+### Semaines de test
+
+Deux facons d'exercer le cycle complet hors saison, toutes deux depuis
+`/admin` → **Outils de test**.
+
+#### Marche a suivre
+
+**Rejeu d'une semaine de 2025** — aucune variable d'environnement, ca marche
+sur l'installation courante :
+
+```bash
+npm run dev                      # ou l'instance deja en place
+```
+
+1. `/admin` → **Outils de test** → Rejeu : annee `2025`, `Saison reguliere`,
+   semaine `1` → « Creer la semaine de rejeu ».
+   Compter ~2 s et 17 requetes ESPN (1 scoreboard + 1 par match pour les cotes
+   historiques). Le message de retour indique le nombre de barèmes figes et,
+   le cas echeant, les matchs sans cotes retrouvees.
+2. `/pronostics` → onglet **TEST · Rejeu 2025 S1** (en fin de liste) : saisir
+   des pronostics, malgre les kickoffs passes et les scores affiches.
+3. `/admin` → « Recalculer tous les points ».
+4. `/classement` → onglet semaine → **TEST · Rejeu 2025 S1** : les points sont
+   la. Onglet **General (saison)** : ils n'y sont pas.
+5. `/admin` → « Supprimer les semaines TEST ».
+
+**Simulation acceleree** — demande `MOCK_ESPN=1` au demarrage :
+
+```bash
+MOCK_ESPN=1 CRON_RESULTS='* * * * *' npm run dev
+```
+
+Sur Windows (PowerShell) :
+
+```powershell
+$env:MOCK_ESPN = '1'; $env:CRON_RESULTS = '* * * * *'; npm run dev
+```
+
+En conteneur, ajouter les deux lignes au `.env` puis `docker compose up -d`.
+Sans `CRON_RESULTS`, le poll reste a 15 min : il faut alors cliquer sur
+« Relancer » en face de « Poll des scores » pour faire avancer les scores.
+
+1. `/admin` → **Outils de test** → « Creer 4 matchs fictifs ».
+   Le bouton n'apparait pas si `MOCK_ESPN` n'est pas a `1`.
+2. `/pronostics` → onglet **TEST · Simulation** : pronostiquer les 4 matchs
+   dans les 5 minutes.
+3. Attendre. A +5 min le premier match se verrouille, son formulaire se ferme
+   et `/match/<id>` devient lisible : les pronostics des autres joueurs y
+   apparaissent, ce qui demande un second compte pour etre vraiment probant.
+4. Les scores avancent d'un quart-temps toutes les 2 min 30. A +15 min le
+   premier match est `final` et ses points sont calcules ; a +30 min les quatre
+   le sont.
+5. `/classement` → onglet semaine, puis `/admin` → « Supprimer les semaines
+   TEST ».
+
+#### Ce que fait chaque mode
+
+**Rejeu historique.** Une semaine d'une saison passee (2025) rejouee telle
+quelle : vrais matchs, vrais scores, et surtout **vraies cotes de l'epoque**.
+ESPN retire `odds[]` du scoreboard des qu'un match est termine, donc les cotes
+d'une saison passee viennent toutes du repli sur la core API — qui, elle, les
+conserve. Sans ce repli, le barème retomberait sur 50/50 partout et le rejeu ne
+testerait plus rien du calcul des points.
+
+Les matchs arrivent deja `final`. Deux consequences assumees, limitees a ces
+semaines : le verrouillage au kickoff est neutralise (sinon la grille serait
+close d'entree et rien ne serait saisissable) et la cloture automatique les
+ignore (elle les fermerait avant qu'on ait pu pronostiquer). Les scores sont
+donc visibles pendant la saisie : c'est un test de plomberie, pas un test
+d'equite.
+
+**Simulation acceleree.** Avec `MOCK_ESPN=1`, quatre matchs fictifs avec des
+kickoffs a +5, +10, +15 et +20 minutes. Les scores avancent d'un quart-temps
+toutes les 2 min 30, puis passent en `final` ; tout est termine 30 minutes
+apres la creation. Ici le verrouillage s'applique normalement — c'est
+justement ce qu'on vient voir. Les equipes sont imaginaires (Aurochs
+d'Ardenne, Bisons du Brabant…), aucune abreviation NFL n'est reutilisee, et
+les identifiants de match sont prefixes `TEST-SIM-`.
+
+**Isolement.** Une semaine de test :
+
+- porte `TEST` dans son libelle, donc partout ou un libelle de semaine
+  s'affiche (onglets, grille, historique du joueur, page match, admin), plus
+  une pastille dediee sur les pages pronostics et classement ;
+- est exclue du classement general, du graphe d'evolution, des statistiques et
+  de l'historique du profil joueur. Elle n'apparait que dans le classement
+  **hebdomadaire** de sa propre semaine — c'est la qu'on verifie que les points
+  ont bien ete calcules ;
+- n'est jamais la semaine affichee par defaut, ni la cible du rappel du jeudi ;
+- occupe un numero reserve (90-99), hors d'atteinte du calendrier reel, et un
+  snapshot lance sur ce numero est refuse plutot que d'ecraser la semaine.
+
+Elle reste visible de tous les joueurs, marquee comme telle.
+
+**Purge.** « Supprimer les semaines TEST » efface les semaines marquees et tout
+ce qui en depend — points, pronostics, barèmes figes, matchs — dans l'ordre des
+cles etrangeres, puis refait le controle d'orphelins et l'affiche. Les vraies
+semaines ne sont pas touchees.
 
 ---
 
 ## 8. Tests
 
 ```bash
-npm test          # barème + parsing ESPN
+npm test          # suite complete (91 tests)
+npm run test:watch
 npm run check     # svelte-check / TypeScript
+
+npx vitest run src/lib/server/testing.test.ts   # cycle d'une semaine de test
+npx vitest run src/lib/server/db/migrate.test.ts
 ```
+
+Aucun test ne sort de la machine : le rejeu n'est couvert que par ses
+validations pures, le chemin reseau est a verifier a la main via `/admin` apres
+une evolution de l'API ESPN.
 
 Les tests couvrent les exemples chiffres de la spec (p = 0,80 → 31 pts,
 0,50 → 50, 0,35 → 71, 0,20 → 125, ≤ 0,10 → 250), le de-vig, les bonus, le match
 nul, les multiplicateurs de playoffs, l'idempotence, et la tolerance du client
 ESPN aux reponses incompletes.
+
+Deux suites sortent du pur calcul :
+
+- `db/migrate.test.ts` rejoue la montee de version sur une base **deja en v1**
+  et peuplee, pas seulement sur une base vierge : c'est le chemin qu'empruntera
+  la base de production, et il verifie qu'aucune semaine existante ne devient
+  une semaine de test au passage.
+- `testing.test.ts` ouvre une base jetable et deroule le cycle d'une semaine de
+  simulation — creation, pronostics, verrouillage a la seconde du kickoff,
+  calcul des points — puis verifie que la purge ne laisse **aucune ligne
+  orpheline** et n'entame pas la vraie semaine posee a cote.
 
 ---
 

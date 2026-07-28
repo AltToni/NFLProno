@@ -11,6 +11,7 @@ import { currentWeek } from './weeks';
 import { currentSeason, getSetting } from './settings';
 import { reminderEmail, sendMail } from './mail';
 import { createLoginToken, magicLinkUrl, purgeExpired } from './auth';
+import { ignoreLeKickoff } from '$lib/nfl';
 import { APP_TIMEZONE, now } from '$lib/time';
 import { logger } from './logger';
 
@@ -149,6 +150,11 @@ export function closeFinishedWeeks(): string {
 	const closed: string[] = [];
 
 	for (const week of open) {
+		// Une semaine de rejeu n'a que des matchs deja finals : la cloture
+		// automatique la fermerait des le premier passage, donc avant que
+		// quiconque ait pu y saisir un pronostic. Elle se ferme a la purge.
+		if (ignoreLeKickoff(week.testKind)) continue;
+
 		const weekGames = db.select().from(games).where(eq(games.weekId, week.id)).all();
 		if (weekGames.length === 0) continue;
 

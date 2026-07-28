@@ -2,6 +2,7 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { db } from './db';
 import { games, oddsSnapshots, weeks } from './db/schema';
 import { enrichOdds, getCurrentPeriod, getScoreboard, type EspnGame } from './espn';
+import { mockEnabled, mockPollGames } from './espn-mock';
 import { getScoringConfig, currentSeason } from './settings';
 import { stakesFromMoneylines } from '$lib/scoring';
 import { SEASONTYPE_PLAYOFFS, SEASONTYPE_REGULAR } from '$lib/nfl';
@@ -98,6 +99,65 @@ export function upsertGames(weekId: number, espnGames: EspnGame[]): number {
 	return count;
 }
 
+export interface SnapshotWriteResult {
+	created: number;
+	skipped: number;
+	fallbacks: string[];
+}
+
+/**
+ * Fige le bareme d'une liste de matchs. Extrait de `runSnapshot` pour que la
+ * creation d'une semaine de test passe exactement par le meme code : un rejeu
+ * doit produire des points de base calcules comme en vrai, sinon il ne teste
+ * rien.
+ *
+ * **A appeler dans une transaction** — la fonction n'en ouvre pas, pour rester
+ * combinable avec la mise a jour de la semaine qui la suit.
+ */
+export function writeSnapshots(espnGames: EspnGame[], force = false): SnapshotWriteResult {
+	const cfg = getScoringConfig();
+	const ts = now();
+	let created = 0;
+	let skipped = 0;
+	const fallbacks: string[] = [];
+
+	for (const g of espnGames) {
+		const existing = db.select().from(oddsSnapshots).where(eq(oddsSnapshots.gameId, g.id)).get();
+		if (existing && !force) {
+			skipped++;
+			if (existing.fallback === 1) fallbacks.push(`${g.away.abbreviation} @ ${g.home.abbreviation}`);
+			continue;
+		}
+
+		const stakes = stakesFromMoneylines(g.odds?.moneylineHome, g.odds?.moneylineAway, cfg);
+		if (stakes.fallback) fallbacks.push(`${g.away.abbreviation} @ ${g.home.abbreviation}`);
+
+		const values = {
+			gameId: g.id,
+			moneylineHome: g.odds?.moneylineHome ?? null,
+			moneylineAway: g.odds?.moneylineAway ?? null,
+			spread: g.odds?.spread ?? null,
+			overUnder: g.odds?.overUnder ?? null,
+			pHome: stakes.pHome,
+			pAway: stakes.pAway,
+			basePointsHome: stakes.basePointsHome,
+			basePointsAway: stakes.basePointsAway,
+			fallback: stakes.fallback ? 1 : 0,
+			provider: g.odds?.provider ?? null,
+			rawJson: JSON.stringify(g.odds?.raw ?? null),
+			capturedAt: ts
+		};
+
+		db.insert(oddsSnapshots)
+			.values(values)
+			.onConflictDoUpdate({ target: oddsSnapshots.gameId, set: values })
+			.run();
+		created++;
+	}
+
+	return { created, skipped, fallbacks };
+}
+
 /**
  * Snapshot hebdomadaire (spec 3, mercredi 09:00) : fige le bareme de la semaine
  * puis ouvre les pronostics.
@@ -146,6 +206,22 @@ export async function runSnapshot(
 		);
 	}
 
+	// Une semaine de test occupe une place dans la meme table que les vraies.
+	// Sans ce garde-fou, un snapshot lance sur son numero la reprendrait en
+	// silence : les fixtures seraient remplacees par de vrais matchs, et les
+	// pronostics de test se retrouveraient rattaches a une vraie semaine.
+	const occupant = db
+		.select({ testKind: weeks.testKind, label: weeks.label })
+		.from(weeks)
+		.where(and(eq(weeks.season, season), eq(weeks.seasontype, seasontype), eq(weeks.number, week)))
+		.get();
+	if (occupant?.testKind) {
+		throw new Error(
+			`Snapshot refuse : ${season} / type ${seasontype} / semaine ${week} est occupee par ` +
+				`la semaine de test « ${occupant.label} » (${occupant.testKind}). Purge-la d'abord.`
+		);
+	}
+
 	const { parsed, raw } = await getScoreboard(season, seasontype, week);
 	if (parsed.games.length === 0) {
 		throw new Error(`Aucun match renvoye par ESPN pour ${season} / type ${seasontype} / semaine ${week}`);
@@ -157,46 +233,16 @@ export async function runSnapshot(
 	// Complete les cotes manquantes via la core API avant de figer le bareme.
 	const enriched = await enrichOdds(parsed.games);
 
-	const cfg = getScoringConfig();
 	const ts = now();
 	let snapshotsCreated = 0;
 	let snapshotsSkipped = 0;
-	const fallbacks: string[] = [];
+	let fallbacks: string[] = [];
 
 	db.transaction(() => {
-		for (const g of enriched) {
-			const existing = db.select().from(oddsSnapshots).where(eq(oddsSnapshots.gameId, g.id)).get();
-			if (existing && !options.force) {
-				snapshotsSkipped++;
-				if (existing.fallback === 1) fallbacks.push(`${g.away.abbreviation} @ ${g.home.abbreviation}`);
-				continue;
-			}
-
-			const stakes = stakesFromMoneylines(g.odds?.moneylineHome, g.odds?.moneylineAway, cfg);
-			if (stakes.fallback) fallbacks.push(`${g.away.abbreviation} @ ${g.home.abbreviation}`);
-
-			const values = {
-				gameId: g.id,
-				moneylineHome: g.odds?.moneylineHome ?? null,
-				moneylineAway: g.odds?.moneylineAway ?? null,
-				spread: g.odds?.spread ?? null,
-				overUnder: g.odds?.overUnder ?? null,
-				pHome: stakes.pHome,
-				pAway: stakes.pAway,
-				basePointsHome: stakes.basePointsHome,
-				basePointsAway: stakes.basePointsAway,
-				fallback: stakes.fallback ? 1 : 0,
-				provider: g.odds?.provider ?? null,
-				rawJson: JSON.stringify(g.odds?.raw ?? null),
-				capturedAt: ts
-			};
-
-			db.insert(oddsSnapshots)
-				.values(values)
-				.onConflictDoUpdate({ target: oddsSnapshots.gameId, set: values })
-				.run();
-			snapshotsCreated++;
-		}
+		const ecrit = writeSnapshots(enriched, options.force === true);
+		snapshotsCreated = ecrit.created;
+		snapshotsSkipped = ecrit.skipped;
+		fallbacks = ecrit.fallbacks;
 
 		db.update(weeks)
 			.set({
@@ -229,6 +275,50 @@ export async function runSnapshot(
 	};
 }
 
+type WeekACarafraichir = {
+	id: number;
+	seasontype: number;
+	number: number;
+	testKind: string | null;
+	sourceSeason: number | null;
+	sourceSeasontype: number | null;
+	sourceNumber: number | null;
+};
+
+/**
+ * D'ou viennent les matchs d'une semaine lors d'un poll. Trois cas :
+ *
+ *  - simulation : du client factice, jamais du reseau, et uniquement si
+ *    MOCK_ESPN=1. La variable retiree, la semaine se fige sur place au lieu de
+ *    partir chercher une « semaine 90 » qui n'existe pas chez ESPN ;
+ *  - rejeu      : des coordonnees d'origine (2025 / 2 / 1), pas de celles sous
+ *    lesquelles la semaine est rangee dans la saison courante ;
+ *  - vraie semaine : inchange.
+ */
+async function matchsAJour(w: WeekACarafraichir, season: number): Promise<EspnGame[] | null> {
+	if (w.testKind === 'simulation') {
+		if (!mockEnabled()) {
+			logger.warn(
+				`Semaine de simulation ${w.number} ignoree par le poll : MOCK_ESPN n'est pas a 1.`
+			);
+			return null;
+		}
+		const stored = db
+			.select({ id: games.id, kickoffUtc: games.kickoffUtc })
+			.from(games)
+			.where(eq(games.weekId, w.id))
+			.all();
+		return mockPollGames(stored, now());
+	}
+
+	const { parsed } = await getScoreboard(
+		w.sourceSeason ?? season,
+		w.sourceSeasontype ?? w.seasontype,
+		w.sourceNumber ?? w.number
+	);
+	return parsed.games;
+}
+
 /**
  * Rafraichit statuts et scores des semaines encore en cours, sans jamais
  * toucher au bareme fige.
@@ -239,7 +329,15 @@ export async function syncScores(): Promise<{ weeks: number; games: number; fina
 	// On rafraichit toute semaine ouverte, plus toute semaine contenant encore
 	// des matchs non termines.
 	const candidates = db
-		.select({ id: weeks.id, seasontype: weeks.seasontype, number: weeks.number })
+		.select({
+			id: weeks.id,
+			seasontype: weeks.seasontype,
+			number: weeks.number,
+			testKind: weeks.testKind,
+			sourceSeason: weeks.sourceSeason,
+			sourceSeasontype: weeks.sourceSeasontype,
+			sourceNumber: weeks.sourceNumber
+		})
 		.from(weeks)
 		.where(and(eq(weeks.season, season), ne(weeks.status, 'a_venir')))
 		.all();
@@ -257,10 +355,10 @@ export async function syncScores(): Promise<{ weeks: number; games: number; fina
 		if (pending.length === 0) continue;
 
 		try {
-			const { parsed } = await getScoreboard(season, w.seasontype, w.number);
-			if (parsed.games.length === 0) continue;
-			touchedGames += upsertGames(w.id, parsed.games);
-			finals += parsed.games.filter((g) => g.status === 'final').length;
+			const espnGames = await matchsAJour(w, season);
+			if (!espnGames || espnGames.length === 0) continue;
+			touchedGames += upsertGames(w.id, espnGames);
+			finals += espnGames.filter((g) => g.status === 'final').length;
 			touchedWeeks++;
 		} catch (error) {
 			logger.error(

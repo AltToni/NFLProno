@@ -90,7 +90,18 @@ export const weeks = sqliteTable(
 			.default('a_venir'),
 		snapshotAt: integer('snapshot_at'),
 		closedAt: integer('closed_at'),
-		winnerUserId: integer('winner_user_id').references(() => users.id)
+		winnerUserId: integer('winner_user_id').references(() => users.id),
+		/**
+		 * null = vraie semaine. Sinon la semaine est un bac a sable :
+		 *   rejeu      = calendrier d'une saison passee, matchs deja finals ;
+		 *   simulation = fixtures du client factice (MOCK_ESPN).
+		 * Une semaine marquee sort du classement general et des stats joueur.
+		 */
+		testKind: text('test_kind', { enum: ['rejeu', 'simulation'] }),
+		/** Coordonnees ESPN reellement interrogees par un rejeu (2025 / 2 / 1). */
+		sourceSeason: integer('source_season'),
+		sourceSeasontype: integer('source_seasontype'),
+		sourceNumber: integer('source_number')
 	},
 	(t) => ({
 		uniq: uniqueIndex('weeks_uidx').on(t.season, t.seasontype, t.number)

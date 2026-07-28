@@ -29,9 +29,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			seasontype: week.seasontype,
 			number: week.number,
 			snapshotAt: week.snapshotAt,
-			winnerUserId: week.winnerUserId
+			winnerUserId: week.winnerUserId,
+			testKind: week.testKind,
+			sourceSeason: week.sourceSeason
 		},
-		weeks: weeks.map((w) => ({ id: w.id, label: w.label, status: w.status })),
+		weeks: weeks.map((w) => ({
+			id: w.id,
+			label: w.label,
+			status: w.status,
+			testKind: w.testKind
+		})),
 		games: weekBoard(week.id, user.id),
 		multiplier: playoffMultiplier(week.seasontype, week.number, cfg)
 	};

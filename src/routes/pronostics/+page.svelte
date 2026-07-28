@@ -1,12 +1,14 @@
 <script lang="ts">
 	import GameCard from '$lib/components/GameCard.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
+	import { isTestWeek, TEST_KIND_LABEL, type TestKind } from '$lib/nfl';
 	import { dayKey, formatDayHeading, formatDateTime } from '$lib/time';
 	import type { BoardGame } from '$lib/types';
 
 	let { data, form } = $props();
 
 	const games = $derived(data.games as BoardGame[]);
+	const testKind = $derived(data.week?.testKind ?? null);
 
 	// Regroupement par jour, en heure belge (reference commune du groupe).
 	const groups = $derived.by(() => {
@@ -51,14 +53,35 @@
 			<a
 				class="tab"
 				class:tab--active={week.id === data.week.id}
-				href="/pronostics?semaine={week.id}">{week.label}</a
+				href="/pronostics?semaine={week.id}"
 			>
+				{week.label}
+				{#if isTestWeek(week.testKind)}<span class="badge badge--test">TEST</span>{/if}
+			</a>
 		{/each}
 	</div>
 
+	{#if isTestWeek(testKind)}
+		<div class="alert alert--warn small">
+			<strong>Semaine de test — {TEST_KIND_LABEL[testKind as TestKind]}.</strong>
+			Elle sert a verifier le fonctionnement du jeu : ses points ne comptent
+			<strong>ni au classement general ni dans tes statistiques</strong>, et elle sera supprimee
+			par l'administrateur.
+			{#if testKind === 'rejeu'}
+				Les matchs viennent de la saison {data.week.sourceSeason} et sont deja termines : les
+				scores sont visibles et la saisie reste ouverte malgre les kickoffs passes.
+			{:else}
+				Les kickoffs sont dans quelques minutes et le verrouillage s'applique normalement.
+			{/if}
+		</div>
+	{/if}
+
 	<div class="between wrap" style="margin-bottom:0.85rem">
 		<div>
-			<h1 style="margin-bottom:0.2rem">{data.week.label}</h1>
+			<h1 style="margin-bottom:0.2rem">
+				{data.week.label}
+				{#if isTestWeek(testKind)}<span class="badge badge--test">TEST</span>{/if}
+			</h1>
 			<p class="small muted" style="margin:0">
 				{done}/{playable} pronostiques
 				{#if data.week.status === 'cloturee'}

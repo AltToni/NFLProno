@@ -34,6 +34,13 @@ function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoint
 	});
 }
 
+/**
+ * `test_kind IS NULL` revient dans toutes les requetes de ce module : le
+ * classement general, le graphe d'evolution et les stats d'un joueur ne voient
+ * que les vraies semaines. Le classement *hebdomadaire*, lui, ne filtre pas —
+ * il porte sur une semaine designee, et c'est justement la qu'on va verifier
+ * que le rejeu a bien calcule ses points.
+ */
 const SEASON_STANDINGS = `
 	SELECT u.id AS userId, u.pseudo, u.avatar,
 		COALESCE(SUM(s.points), 0)       AS points,
@@ -44,7 +51,7 @@ const SEASON_STANDINGS = `
 	FROM users u
 	LEFT JOIN scores s
 		ON s.user_id = u.id
-		AND s.week_id IN (SELECT id FROM weeks WHERE season = @season)
+		AND s.week_id IN (SELECT id FROM weeks WHERE season = @season AND test_kind IS NULL)
 	WHERE u.active = 1
 	GROUP BY u.id
 `;
@@ -92,7 +99,8 @@ export function rankEvolution(season = currentSeason()): {
 	const weekRows = sqlite
 		.prepare(
 			`SELECT id, label FROM weeks
-			 WHERE season = @season AND status IN ('ouverte', 'cloturee')
+			 WHERE season = @season AND test_kind IS NULL
+				   AND status IN ('ouverte', 'cloturee')
 			 ORDER BY seasontype ASC, number ASC`
 		)
 		.all({ season }) as { id: number; label: string }[];
@@ -109,7 +117,7 @@ export function rankEvolution(season = currentSeason()): {
 				SUM(s.exact_margin) AS exactMargins
 			 FROM scores s
 			 JOIN weeks w ON w.id = s.week_id
-			 WHERE w.season = @season
+			 WHERE w.season = @season AND w.test_kind IS NULL
 			 GROUP BY s.week_id, s.user_id`
 		)
 		.all({ season }) as {
@@ -209,7 +217,7 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 				COALESCE(SUM(s.exact_margin), 0) AS exactMargins
 			 FROM scores s
 			 JOIN weeks w ON w.id = s.week_id
-			 WHERE s.user_id = @userId AND w.season = @season`
+			 WHERE s.user_id = @userId AND w.season = @season AND w.test_kind IS NULL`
 		)
 		.get({ userId, season }) as any;
 
@@ -225,6 +233,7 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 			 JOIN odds_snapshots o ON o.game_id = s.game_id
 			 JOIN weeks w ON w.id = s.week_id
 			 WHERE s.user_id = @userId AND s.correct = 1 AND w.season = @season
+				   AND w.test_kind IS NULL
 			 ORDER BY probability ASC, s.points DESC
 			 LIMIT 1`
 		)
@@ -232,7 +241,8 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 
 	const weeklyWins = sqlite
 		.prepare(
-			`SELECT COUNT(*) AS n FROM weeks WHERE season = @season AND winner_user_id = @userId`
+			`SELECT COUNT(*) AS n FROM weeks WHERE season = @season AND test_kind IS NULL
+				   AND winner_user_id = @userId`
 		)
 		.get({ userId, season }) as { n: number };
 
@@ -273,7 +283,7 @@ export function playerHistory(userId: number, season = currentSeason()) {
 			 JOIN weeks w ON w.id = g.week_id
 			 LEFT JOIN odds_snapshots o ON o.game_id = g.id
 			 LEFT JOIN scores s ON s.game_id = g.id AND s.user_id = p.user_id
-			 WHERE p.user_id = @userId AND w.season = @season
+			 WHERE p.user_id = @userId AND w.season = @season AND w.test_kind IS NULL
 			 ORDER BY g.kickoff_utc DESC`
 		)
 		.all({ userId, season }) as any[];

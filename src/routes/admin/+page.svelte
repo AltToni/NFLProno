@@ -23,6 +23,10 @@
 	});
 
 	const seasonStarted = $derived(data.weeks.some((w) => w.status !== 'a_venir'));
+
+	const orphelinsTotal = $derived(
+		data.orphelins.games + data.orphelins.picks + data.orphelins.scores + data.orphelins.odds
+	);
 </script>
 
 <svelte:head><title>Admin — Pronos NFL</title></svelte:head>
@@ -194,6 +198,125 @@
 			Le recalcul est idempotent : il reecrit les points a partir des pronostics et du bareme fige.
 		</p>
 	</div>
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<div class="card">
+	<h2>Outils de test</h2>
+	<p class="small muted">
+		Deux facons d'exercer le cycle complet hors saison. Les semaines creees ici portent
+		<span class="badge badge--test">TEST</span> partout dans l'interface, sortent du classement
+		general et des statistiques des joueurs, et ne deviennent jamais la semaine affichee par
+		defaut. Elles restent visibles de tous les joueurs.
+	</p>
+
+	<h3 style="margin-top:1.1rem">Rejeu d'une saison passee</h3>
+	<form method="POST" action="?/rejeu" use:enhance class="row wrap">
+		<input
+			type="number"
+			name="year"
+			min="2000"
+			max={data.season - 1}
+			value={data.season - 1}
+			style="width:6.5rem"
+			aria-label="Saison a rejouer"
+		/>
+		<select name="seasontype" aria-label="Type de saison" style="width:auto">
+			<option value="2">Saison reguliere</option>
+			<option value="3">Playoffs</option>
+		</select>
+		<input
+			type="number"
+			name="week"
+			min="1"
+			max="22"
+			value="1"
+			placeholder="semaine"
+			style="width:6.5rem"
+			aria-label="Numero de semaine"
+		/>
+		<button class="btn" type="submit">Creer la semaine de rejeu</button>
+	</form>
+	<p class="tiny muted" style="margin:0.4rem 0 0">
+		Les matchs arrivent deja finals et les cotes viennent de l'historique ESPN. Le verrouillage au
+		kickoff est neutralise sur ces semaines — sans quoi rien ne serait saisissable — et la cloture
+		automatique les ignore. Enchainer ensuite « Recalculer tous les points ».
+	</p>
+
+	<h3 style="margin-top:1.3rem">Simulation acceleree</h3>
+	{#if data.mockEnabled}
+		<form method="POST" action="?/simulation" use:enhance class="row wrap">
+			<button class="btn" type="submit">
+				Creer {data.nbFixtures} matchs fictifs
+			</button>
+			<span class="small muted">kickoffs a +5, +10, +15 et +20 min</span>
+		</form>
+		<p class="tiny muted" style="margin:0.4rem 0 0">
+			Le verrouillage, lui, s'applique normalement : c'est ce qu'on vient observer, avec
+			l'apparition des pronostics des autres et le calcul des points au passage en final. Les
+			scores avancent d'un quart-temps toutes les 2 min 30 ; relancer « Poll des scores » pour les
+			faire suivre, ou demarrer avec <code class="tiny">CRON_RESULTS=* * * * *</code>.
+		</p>
+	{:else}
+		<p class="small muted" style="margin:0">
+			Indisponible : demarrer l'application avec <code class="tiny">MOCK_ESPN=1</code>. Sans cette
+			variable, aucun match fictif ne peut entrer en base.
+		</p>
+	{/if}
+
+	<h3 style="margin-top:1.3rem">Semaines de test en base</h3>
+	{#if data.testWeeks.length === 0}
+		<p class="small muted" style="margin:0">Aucune.</p>
+	{:else}
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Semaine</th>
+						<th>Nature</th>
+						<th class="num">Matchs</th>
+						<th class="num">Pronos</th>
+						<th class="num">Points</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.testWeeks as semaine (semaine.id)}
+						<tr>
+							<td>
+								<a href="/pronostics?semaine={semaine.id}">{semaine.label}</a>
+								<span class="tiny muted">({semaine.status})</span>
+							</td>
+							<td class="small">
+								{semaine.testKind === 'rejeu'
+									? `rejeu de ${semaine.sourceSeason} / type ${semaine.sourceSeasontype} / semaine ${semaine.sourceNumber}`
+									: 'simulation'}
+							</td>
+							<td class="num">{semaine.games}</td>
+							<td class="num">{semaine.picks}</td>
+							<td class="num">{semaine.scores}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<form method="POST" action="?/purgerTests" use:enhance style="margin-top:0.8rem">
+			<button class="btn btn--danger" type="submit">Supprimer les semaines TEST</button>
+		</form>
+		<p class="tiny muted" style="margin:0.4rem 0 0">
+			Supprime les semaines marquees et tout ce qui en depend : points, pronostics, baremes figes,
+			matchs. Les vraies semaines ne sont pas touchees, et le controle d'orphelins est refait
+			juste apres.
+		</p>
+	{/if}
+
+	{#if orphelinsTotal > 0}
+		<div class="alert alert--error small" style="margin:0.9rem 0 0">
+			{orphelinsTotal} ligne(s) orpheline(s) en base : {data.orphelins.games} match(s),
+			{data.orphelins.picks} pronostic(s), {data.orphelins.scores} ligne(s) de points,
+			{data.orphelins.odds} bareme(s) sans parent.
+		</div>
+	{/if}
 </div>
 
 <!-- ------------------------------------------------------------------ -->

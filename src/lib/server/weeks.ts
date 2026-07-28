@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from './db';
 import { weeks, games } from './db/schema';
 import { weekLabel } from '$lib/nfl';
@@ -44,25 +44,35 @@ export function listWeeks(season = currentSeason()): Week[] {
 		.all();
 }
 
-/** Semaines deja jouables ou jouees, de la plus recente a la plus ancienne. */
+/**
+ * Semaines deja jouables ou jouees, de la plus recente a la plus ancienne.
+ *
+ * Les semaines de test restent visibles — c'est bien le but, il faut pouvoir
+ * ouvrir la grille — mais passent en fin de liste : leur numero reserve (90+)
+ * les placerait sinon en tete des onglets, devant la semaine en cours.
+ */
 export function listVisibleWeeks(season = currentSeason()): Week[] {
 	return db
 		.select()
 		.from(weeks)
 		.where(and(eq(weeks.season, season), inArray(weeks.status, ['ouverte', 'cloturee'])))
-		.orderBy(desc(weeks.seasontype), desc(weeks.number))
+		.orderBy(sql`${weeks.testKind} IS NULL DESC`, desc(weeks.seasontype), desc(weeks.number))
 		.all();
 }
 
 /**
  * Semaine affichee par defaut : la derniere semaine ouverte, sinon la derniere
  * semaine cloturee.
+ *
+ * Jamais une semaine de test : creer un bac a sable ne doit pas deplacer la
+ * page d'accueil des joueurs ni la cible du rappel du jeudi. On y accede par
+ * son onglet, explicitement.
  */
 export function currentWeek(season = currentSeason()): Week | undefined {
 	const open = db
 		.select()
 		.from(weeks)
-		.where(and(eq(weeks.season, season), eq(weeks.status, 'ouverte')))
+		.where(and(eq(weeks.season, season), isNull(weeks.testKind), eq(weeks.status, 'ouverte')))
 		.orderBy(desc(weeks.seasontype), desc(weeks.number))
 		.get();
 	if (open) return open;
@@ -70,7 +80,7 @@ export function currentWeek(season = currentSeason()): Week | undefined {
 	return db
 		.select()
 		.from(weeks)
-		.where(and(eq(weeks.season, season), eq(weeks.status, 'cloturee')))
+		.where(and(eq(weeks.season, season), isNull(weeks.testKind), eq(weeks.status, 'cloturee')))
 		.orderBy(desc(weeks.seasontype), desc(weeks.number))
 		.get();
 }

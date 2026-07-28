@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 import { db, sqlite } from './db';
 import { cronRuns, games, oddsSnapshots, weeks } from './db/schema';
 import { TASK_LABELS, type TaskName } from './cron';
@@ -120,10 +120,22 @@ export function etatSysteme(): EtatSysteme {
 
 	// « En saison » = des matchs sont proches. Sert a decider si l'absence de
 	// snapshot ou de poll est anormale ou simplement l'ete.
+	//
+	// Les semaines de test sont exclues de tous les indicateurs qui suivent.
+	// Une simulation posee un dimanche de juillet a des kickoffs a cinq minutes
+	// et des cotes fraiches : sans ce filtre elle ferait croire qu'on est en
+	// saison et masquerait un vrai snapshot manquant depuis trois semaines.
 	const matchsProches = db
 		.select({ n: sql<number>`count(*)` })
 		.from(games)
-		.where(and(gte(games.kickoffUtc, maintenant - 7 * JOUR), lte(games.kickoffUtc, maintenant + 14 * JOUR)))
+		.innerJoin(weeks, eq(weeks.id, games.weekId))
+		.where(
+			and(
+				isNull(weeks.testKind),
+				gte(games.kickoffUtc, maintenant - 7 * JOUR),
+				lte(games.kickoffUtc, maintenant + 14 * JOUR)
+			)
+		)
 		.get();
 	const enSaison = (matchsProches?.n ?? 0) > 0;
 
@@ -133,12 +145,15 @@ export function etatSysteme(): EtatSysteme {
 	const snap = db
 		.select({ capturedAt: oddsSnapshots.capturedAt })
 		.from(oddsSnapshots)
+		.innerJoin(games, eq(games.id, oddsSnapshots.gameId))
+		.innerJoin(weeks, eq(weeks.id, games.weekId))
+		.where(isNull(weeks.testKind))
 		.orderBy(desc(oddsSnapshots.capturedAt))
 		.get();
 	const semaineOuverte = db
 		.select({ label: weeks.label })
 		.from(weeks)
-		.where(eq(weeks.status, 'ouverte'))
+		.where(and(isNull(weeks.testKind), eq(weeks.status, 'ouverte')))
 		.orderBy(desc(weeks.snapshotAt))
 		.get();
 
@@ -163,7 +178,8 @@ export function etatSysteme(): EtatSysteme {
 	const matchEnCours = db
 		.select({ n: sql<number>`count(*)` })
 		.from(games)
-		.where(eq(games.status, 'in'))
+		.innerJoin(weeks, eq(weeks.id, games.weekId))
+		.where(and(isNull(weeks.testKind), eq(games.status, 'in')))
 		.get();
 	const enCours = (matchEnCours?.n ?? 0) > 0;
 	const agePoll = dernierPoll ? maintenant - dernierPoll : null;

@@ -12,6 +12,15 @@ import { recomputeSeason } from '$lib/server/results';
 import { backupDatabase } from '$lib/server/backup';
 import { listWeeks } from '$lib/server/weeks';
 import { etatSysteme } from '$lib/server/health';
+import {
+	createReplayWeek,
+	createSimulationWeek,
+	listTestWeeks,
+	mockEnabled,
+	NB_FIXTURES,
+	orphelins,
+	purgeTestWeeks
+} from '$lib/server/testing';
 
 export const load: PageServerLoad = async () => {
 	return {
@@ -35,7 +44,22 @@ export const load: PageServerLoad = async () => {
 		runs: recentRuns(20),
 		weeks: listWeeks(),
 		season: currentSeason(),
-		etat: etatSysteme()
+		etat: etatSysteme(),
+		testWeeks: listTestWeeks().map((t) => ({
+			id: t.week.id,
+			label: t.week.label,
+			status: t.week.status,
+			testKind: t.week.testKind,
+			sourceSeason: t.week.sourceSeason,
+			sourceSeasontype: t.week.sourceSeasontype,
+			sourceNumber: t.week.sourceNumber,
+			games: t.games,
+			picks: t.picks,
+			scores: t.scores
+		})),
+		mockEnabled: mockEnabled(),
+		nbFixtures: NB_FIXTURES,
+		orphelins: orphelins()
 	};
 };
 
@@ -163,5 +187,61 @@ export const actions: Actions = {
 		const name = String(form.get('name')) as TaskName;
 		const result = await runTask(name, 'manuel');
 		return result.ok ? { ok: `${name} : ${result.message}` } : fail(500, { error: result.message });
+	},
+
+	/** Rejeu d'une semaine d'une saison passee, matchs et cotes historiques compris. */
+	rejeu: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const form = await request.formData();
+		const year = Number(form.get('year'));
+		const seasontype = Number(form.get('seasontype'));
+		const week = Number(form.get('week'));
+
+		try {
+			const result = await createReplayWeek({ year, seasontype, week });
+			return {
+				ok:
+					`${result.label} creee : ${result.games} match(s), ${result.snapshots} bareme(s) figes` +
+					(result.fallbacks.length
+						? `, cotes historiques introuvables sur ${result.fallbacks.length} match(s) (bareme 50/50)`
+						: '') +
+					'. Les pronostics y sont saisissables malgre les kickoffs passes.'
+			};
+		} catch (err) {
+			return fail(400, { error: (err as Error).message });
+		}
+	},
+
+	/** Simulation acceleree : quatre matchs fictifs, kickoffs a +5, +10, +15 et +20 min. */
+	simulation: async ({ locals }) => {
+		requireAdmin(locals);
+		try {
+			const result = createSimulationWeek();
+			return {
+				ok:
+					`${result.label} creee : ${result.games} matchs fictifs, premier kickoff dans 5 min, ` +
+					`dernier final dans 30 min. Relance « Poll des scores » pour faire avancer les scores.`
+			};
+		} catch (err) {
+			return fail(400, { error: (err as Error).message });
+		}
+	},
+
+	purgerTests: async ({ locals }) => {
+		requireAdmin(locals);
+		const rapport = purgeTestWeeks();
+		if (rapport.weeks === 0) return { ok: 'Aucune semaine de test a supprimer.' };
+
+		const restants = orphelins();
+		const total = restants.games + restants.picks + restants.scores + restants.odds;
+
+		return {
+			ok:
+				`Purge : ${rapport.weeks} semaine(s) (${rapport.labels.join(', ')}), ${rapport.games} match(s), ` +
+				`${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de points, ${rapport.odds} bareme(s). ` +
+				(total === 0
+					? 'Aucune ligne orpheline.'
+					: `Attention : ${total} ligne(s) orpheline(s) subsistent.`)
+		};
 	}
 };
