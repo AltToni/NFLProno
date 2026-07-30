@@ -103,6 +103,48 @@ ml > 0 :  p_raw = 100 / (ml + 100)
 
 puis de-vig par normalisation : `p = p_raw / (p_raw_home + p_raw_away)`.
 
+### Deux modes de saisie
+
+Pour chaque match, le joueur choisit **comment** il pronostique. La bascule est
+sur la carte du match, et le mode retenu est memorise avec le pronostic : deux
+matchs de la meme semaine peuvent etre saisis differemment.
+
+| Mode | Ce qu'on saisit | Bonus accessibles |
+|---|---|---|
+| **A — Vainqueur + ecart** | une equipe et un ecart entier ≥ 1, ou « Match nul » (ecart 0, aucune equipe) | ×1,5 (ecart exact). **Jamais ×2** : aucun score n'est predit |
+| **B — Score** | les deux scores ; l'interface derive et affiche en direct le vainqueur et l'ecart | ×1,5 (ecart exact) et ×2 (score exact) |
+
+Les deux modes partagent le meme calcul : l'**ecart signe predit** est la seule
+grandeur qui compte, et elle vient soit de l'ecart annonce, soit de la
+difference des scores. Le mode ne change donc que l'acces au ×2.
+
+Une carte de `/pronostics`, ici en mode A apres avoir choisi KC et un ecart de
+7 points :
+
+```
+ 19:00                                        dans 2 j 4 h · details
+
+   [ Vainqueur + ecart ]   [        Score       ]   <- bascule par match
+
+     LV  125 pts      @      KC  31 pts             <- choix en vert
+
+   [ Match nul ]   ecart de [ 7 ]  points
+
+   Soit KC +7 — ×1,5 si l'ecart est exact, jamais de ×2.
+```
+
+En mode B, la ligne « ecart de » cede la place aux deux cases de score, et la
+ligne d'apercu suit la frappe : `Soit KC +7 — ×1,5 si l'ecart est exact, ×2 si
+le score l'est`. Le vainqueur y est **derive** du score, il n'y a donc plus de
+contradiction possible entre les deux ; le refus des scores incoherents reste en
+place cote serveur. Un score nul (`20–20`) est le seul cas ou le joueur designe
+encore une equipe à la main : elle decide des points si le match ne finit
+finalement pas nul.
+
+Sur `/match/<id>`, les pronostics du groupe sont affiches **sous la forme
+saisie** — « KC +7 » ou « 27–20 », avec l'ecart derive en dessous pour un score
+predit : on voit ce que chacun a joue, et comment.
+
 ### Points
 
 ```
@@ -113,10 +155,11 @@ base  = clamp(round(25 / p), 25, 250)
 |---|---|
 | Vainqueur correct | `base` |
 | + ecart exact | `base × 1,5` |
-| + score exact | `base × 2` (remplace le bonus d'ecart) |
+| + score exact (mode B uniquement) | `base × 2` (remplace le bonus d'ecart) |
 | Vainqueur incorrect | 0 |
 | Match nul | `base × 0,5` de l'equipe choisie |
 | Match nul predit (ecart 0) | `base × 1,5` |
+| Nul predit en mode A, match avec vainqueur | 0 : aucune equipe a crediter |
 | Match reporte / annule | 0 pour tous, match neutralise |
 | Cotes absentes au snapshot | `p = 0,5` des deux cotes, signale dans l'admin |
 | Pas de pronostic | 0 |
@@ -126,17 +169,43 @@ Championships ×2,5, Super Bowl ×3.
 
 Toutes ces constantes sont en base (`settings`) et editables dans `/admin`.
 
-**Deux points d'interpretation de la spec**, à trancher avant le coup d'envoi :
+**Exemple chiffre** sur `LV @ KC` — 31 pts sur KC, 125 pts sur LV, resultat final
+**KC 24 – LV 20**. Les scores predits se lisent dans l'ordre de l'interface,
+**visiteurs–locaux**, soit `LV–KC` :
+
+| Pronostic saisi | Mode | Points |
+|---|---|---|
+| `KC +4` | A | 47 — vainqueur + ecart exact : `round(31 × 1,5)` |
+| `KC +10` | A | 31 — bon vainqueur, ecart rate |
+| `LV +4` | A | 0 — mauvais vainqueur |
+| `Match nul` | A | 0 — le match a un vainqueur, aucune equipe n'etait designee |
+| `20–24` | B | 62 — score exact : `31 × 2` |
+| `23–27` | B | 47 — ecart exact (KC +4), score rate |
+| `10–30` | B | 31 — bon vainqueur, rien de plus |
+
+Si ce meme match avait fini **20 – 20**, un `Match nul` (mode A) aurait rapporte
+`round(78 × 1,5)` = 117 pts, 78 etant la moyenne des deux baremes (voir
+interpretation 3 ci-dessous), et un `KC +4` aurait touche `round(31 × 0,5)` =
+16 pts au titre du match nul.
+
+**Trois points d'interpretation de la spec**, à trancher avant le coup d'envoi :
 
 1. *Match nul avec score exact predit.* La spec prevoit « points de base +
    bonus d'ecart » pour qui predit un nul. L'implementation applique la regle
    generale du §2.3 : si le score du nul est exact au point pres, c'est le bonus
    de score exact (×2) qui s'applique, sinon le bonus d'ecart (×1,5). Pour
-   coller au texte à la lettre, mettre `scoring.exact_bonus_pct` = 0,5.
+   coller au texte à la lettre, mettre `scoring.exact_bonus_pct` = 0,5. En mode
+   A la question ne se pose pas : sans score predit, le bonus reste à ×1,5.
 2. *Coherence score / vainqueur.* Un pronostic dont le score donnerait la
    victoire à l'equipe non choisie est refuse (cote client **et** serveur). Le
    nul reste autorise quelle que soit l'equipe choisie, puisque la spec le
-   prevoit explicitement.
+   prevoit explicitement. Cote mode A, le controle serveur exige la meme
+   coherence : un ecart ≥ 1 designe une equipe, un ecart 0 n'en designe aucune.
+3. *Enjeu d'un nul predit en mode A.* « Match nul » ne choisit pas d'equipe,
+   donc aucun des deux baremes ne s'impose. Les points en jeu sont la **moyenne
+   des deux**, seule valeur neutre. Consequence assumee : si le match a
+   finalement un vainqueur, ce pronostic vaut 0, là ou un nul saisi en mode B
+   (par exemple `20–20` sur KC) rapporte encore la base de l'equipe choisie.
 
 Le module `src/lib/scoring.ts` est pur (ni base ni reseau) et couvert par
 `npm test`.
@@ -175,7 +244,10 @@ src/
 - **Migrations sans CLI.** `src/lib/server/db/migrate.ts` joue des scripts SQL
   numerotes suivis par `PRAGMA user_version`. Le conteneur se suffit à lui-meme,
   aucune etape `drizzle-kit push` au deploiement. `drizzle.config.ts` reste
-  fourni pour `npm run db:studio`.
+  fourni pour `npm run db:studio`. La v3 reconstruit `picks` (creation, copie,
+  `DROP`, `RENAME`, index) : trois colonnes devaient devenir nullables, ce
+  qu'`ALTER TABLE` ne sait pas faire en SQLite. `picks` n'etant la table parente
+  d'aucune autre, l'operation ne laisse aucune reference pendante.
 - **Double source de cotes.** ESPN retire `odds[]` du scoreboard des qu'un match
   est termine, et parfois plusieurs jours avant le kickoff. Le snapshot complete
   donc chaque match sans moneyline via
@@ -347,7 +419,10 @@ npm run dev                      # ou l'instance deja en place
    historiques). Le message de retour indique le nombre de barèmes figes et,
    le cas echeant, les matchs sans cotes retrouvees.
 2. `/pronostics` → onglet **TEST · Rejeu 2025 S1** (en fin de liste) : saisir
-   des pronostics, malgre les kickoffs passes et les scores affiches.
+   des pronostics, malgre les kickoffs passes et les scores affiches. C'est
+   l'occasion d'exercer les deux modes de saisie cote a cote — un « vainqueur +
+   ecart », un « Match nul », des scores — et de retrouver les trois formes sur
+   `/match/<id>` puis dans le profil joueur.
 3. `/admin` → « Recalculer tous les points ».
 4. `/classement` → onglet semaine → **TEST · Rejeu 2025 S1** : les points sont
    la. Onglet **General (saison)** : ils n'y sont pas.
@@ -431,7 +506,7 @@ semaines ne sont pas touchees.
 ## 8. Tests
 
 ```bash
-npm test          # suite complete (91 tests)
+npm test          # suite complete (113 tests)
 npm run test:watch
 npm run check     # svelte-check / TypeScript
 
@@ -448,16 +523,29 @@ Les tests couvrent les exemples chiffres de la spec (p = 0,80 → 31 pts,
 nul, les multiplicateurs de playoffs, l'idempotence, et la tolerance du client
 ESPN aux reponses incompletes.
 
+**Les deux modes de saisie sont chiffres de part en part**, avec les memes
+exemples que la section 4 (`LV @ KC`, 31 / 125 pts, KC 24 – LV 20) : ecart
+exact (47 pts), ecart rate (31), mauvais vainqueur (0), nul predit sur un vrai
+nul (117, sur la moyenne des baremes), nul predit sur un match avec vainqueur
+(0), equipe choisie sur un match nul (16), et la comparaison qui montre le
+plafond du mode A — 47 pts la ou le meme ecart saisi comme score exact en
+vaudrait 62. La coherence de saisie est testee mode par mode : ecart ≥ 1 avec
+equipe, ecart 0 sans equipe, et le refus de tout le reste.
+
 Deux suites sortent du pur calcul :
 
 - `db/migrate.test.ts` rejoue la montee de version sur une base **deja en v1**
   et peuplee, pas seulement sur une base vierge : c'est le chemin qu'empruntera
-  la base de production, et il verifie qu'aucune semaine existante ne devient
-  une semaine de test au passage.
+  la base de production. Il verifie qu'aucune semaine existante ne devient une
+  semaine de test au passage, et que la v3 — la seule migration qui **recopie**
+  des donnees, `picks` etant reconstruite — repasse chaque pronostic existant en
+  mode « score » a l'identique, index uniques et cles etrangeres compris.
 - `testing.test.ts` ouvre une base jetable et deroule le cycle d'une semaine de
-  simulation — creation, pronostics, verrouillage a la seconde du kickoff,
-  calcul des points — puis verifie que la purge ne laisse **aucune ligne
-  orpheline** et n'entame pas la vraie semaine posee a cote.
+  simulation — creation, pronostics **dans les deux modes**, verrouillage a la
+  seconde du kickoff, calcul des points — puis verifie que la purge ne laisse
+  **aucune ligne orpheline** et n'entame pas la vraie semaine posee a cote. Un
+  pronostic mode A y traverse toute la chaine, de la saisie jusqu'a la ligne de
+  points, nul predit sans equipe inclus.
 
 ---
 

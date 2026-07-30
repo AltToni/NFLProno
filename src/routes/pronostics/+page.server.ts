@@ -44,7 +44,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	};
 };
 
-/** Champ de score : entier explicite, ou null si absent, vide ou mal forme. */
+/** Champ numerique : entier explicite, ou null si absent, vide ou mal forme. */
 function parseScore(raw: FormDataEntryValue | null): number | null {
 	if (typeof raw !== 'string') return null;
 	const trimmed = raw.trim();
@@ -58,18 +58,47 @@ export const actions: Actions = {
 		const form = await request.formData();
 
 		const gameId = String(form.get('gameId') ?? '');
-		const pickSide = String(form.get('pickSide') ?? '');
+		const rawMode = String(form.get('mode') ?? 'score');
+		const rawSide = String(form.get('pickSide') ?? '');
+		const pickSide = rawSide === 'home' || rawSide === 'away' ? rawSide : null;
+
+		if (rawMode !== 'score' && rawMode !== 'margin') {
+			return fail(400, { gameId, error: 'Mode de saisie invalide.' });
+		}
 
 		/**
-		 * `Number(null)` et `Number('')` valent 0, et 0-0 est un pronostic valide
-		 * (nul predit). Sans ce controle, un envoi sans les cases de score — le
-		 * chemin sans JavaScript, notamment — enregistrerait silencieusement un
-		 * pari sur le match nul a la place du pronostic du joueur.
+		 * `Number(null)` et `Number('')` valent 0, et 0 est une valeur valide dans
+		 * les deux modes (score 0-0, ou nul predit). Sans ce controle, un envoi
+		 * sans les cases attendues — le chemin sans JavaScript, notamment —
+		 * enregistrerait silencieusement un pari sur le match nul a la place du
+		 * pronostic du joueur.
 		 */
+		if (rawMode === 'margin') {
+			const marginPred = parseScore(form.get('marginPred'));
+			if (marginPred === null) {
+				return fail(400, {
+					gameId,
+					error:
+						pickSide === null
+							? 'Choisis une equipe et un ecart, ou « Match nul ».'
+							: 'Renseigne l’ecart de points avant d’enregistrer.'
+				});
+			}
+
+			try {
+				savePick({ userId: user.id, gameId, mode: 'margin', pickSide, marginPred });
+			} catch (err) {
+				if (err instanceof PickError) return fail(400, { gameId, error: err.message });
+				throw err;
+			}
+
+			return { gameId, saved: true };
+		}
+
 		const scoreHomePred = parseScore(form.get('scoreHomePred'));
 		const scoreAwayPred = parseScore(form.get('scoreAwayPred'));
 
-		if (pickSide !== 'home' && pickSide !== 'away') {
+		if (pickSide === null) {
 			return fail(400, { gameId, error: 'Choisis une equipe avant d’enregistrer.' });
 		}
 
@@ -78,7 +107,14 @@ export const actions: Actions = {
 		}
 
 		try {
-			savePick({ userId: user.id, gameId, pickSide, scoreHomePred, scoreAwayPred });
+			savePick({
+				userId: user.id,
+				gameId,
+				mode: 'score',
+				pickSide,
+				scoreHomePred,
+				scoreAwayPred
+			});
 		} catch (err) {
 			if (err instanceof PickError) return fail(400, { gameId, error: err.message });
 			throw err;

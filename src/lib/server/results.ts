@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from './db';
 import { games, oddsSnapshots, picks, scores, weeks } from './db/schema';
-import { basePoints, computeScore, playoffMultiplier } from '$lib/scoring';
+import { basePoints, computeScore, pickInputFromRow, playoffMultiplier } from '$lib/scoring';
 import { getScoringConfig, currentSeason } from './settings';
 import { logger } from './logger';
 import { now } from '$lib/time';
@@ -78,11 +78,7 @@ export function computeGameScores(
 
 		for (const pick of gamePicks) {
 			const breakdown = computeScore(
-				{
-					pickSide: pick.pickSide,
-					scoreHomePred: pick.scoreHomePred,
-					scoreAwayPred: pick.scoreAwayPred
-				},
+				pickInputFromRow(pick),
 				{ basePointsHome: baseHome, basePointsAway: baseAway, multiplier },
 				{ scoreHome: game.scoreHome as number, scoreAway: game.scoreAway as number },
 				cfg

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -211,17 +211,94 @@ describe('semaine de simulation', () => {
 		expect(snapshot.detail).toBe('aucune semaine ouverte');
 	});
 
-	it('accepte les pronostics avant le kickoff', () => {
-		for (const game of m.picks.weekBoard(semaineId, joueurId)) {
-			m.picks.savePick({
-				userId: joueurId,
-				gameId: game.id,
-				pickSide: 'home',
-				scoreHomePred: 21,
-				scoreAwayPred: 17
-			});
-		}
-		expect(m.picks.weekBoard(semaineId, joueurId).every((g) => g.pick !== null)).toBe(true);
+	it('accepte les pronostics avant le kickoff, dans les deux modes', () => {
+		const board = m.picks.weekBoard(semaineId, joueurId);
+
+		// Les deux modes cote a cote sur la meme semaine : ecart annonce sur le
+		// premier match (qui finit 27-13, soit 14 d'ecart), nul predit sans equipe
+		// sur le troisieme (qui finit 20-20), scores predits sur les deux autres.
+		m.picks.savePick({
+			userId: joueurId,
+			gameId: board[0].id,
+			mode: 'margin',
+			pickSide: 'home',
+			marginPred: 14
+		});
+		m.picks.savePick({
+			userId: joueurId,
+			gameId: board[1].id,
+			mode: 'score',
+			pickSide: 'home',
+			scoreHomePred: 21,
+			scoreAwayPred: 17
+		});
+		m.picks.savePick({
+			userId: joueurId,
+			gameId: board[2].id,
+			mode: 'margin',
+			pickSide: null,
+			marginPred: 0
+		});
+		m.picks.savePick({
+			userId: joueurId,
+			gameId: board[3].id,
+			mode: 'score',
+			pickSide: 'home',
+			scoreHomePred: 21,
+			scoreAwayPred: 17
+		});
+
+		const apres = m.picks.weekBoard(semaineId, joueurId);
+		expect(apres.every((g) => g.pick !== null)).toBe(true);
+		expect(apres.map((g) => g.pick?.mode)).toEqual(['margin', 'score', 'margin', 'score']);
+
+		// Un mode ne remplit jamais les colonnes de l'autre : une ligne ne peut pas
+		// raconter deux pronostics.
+		expect(apres[0].pick).toMatchObject({
+			mode: 'margin',
+			pickSide: 'home',
+			marginPred: 14,
+			scoreHomePred: null,
+			scoreAwayPred: null
+		});
+		expect(apres[2].pick).toMatchObject({ mode: 'margin', pickSide: null, marginPred: 0 });
+		expect(apres[1].pick).toMatchObject({
+			mode: 'score',
+			scoreHomePred: 21,
+			scoreAwayPred: 17,
+			marginPred: null
+		});
+	});
+
+	it('refuse une saisie incoherente sans toucher au pronostic enregistre', () => {
+		const board = m.picks.weekBoard(semaineId, joueurId);
+		const gameId = board[0].id;
+		const saisie =
+			(input: Omit<Parameters<typeof m.picks.savePick>[0], 'userId' | 'gameId'>) => () =>
+				m.picks.savePick({ userId: joueurId, gameId, ...input });
+
+		// Mode ecart : l'ecart et l'equipe vont ensemble, ou pas du tout.
+		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 0 })).toThrow(/nul/);
+		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 5 })).toThrow(/equipe/);
+		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 100 })).toThrow(/entre 0 et 99/);
+		expect(saisie({ mode: 'margin', pickSide: 'home' })).toThrow(/entre 0 et 99/);
+		// Ecart 0 sans equipe, en revanche, c'est un nul predit : parfaitement valide.
+		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 0 })).not.toThrow();
+
+		// Mode score : le refus des scores incoherents ne bouge pas.
+		expect(
+			saisie({ mode: 'score', pickSide: 'home', scoreHomePred: 17, scoreAwayPred: 24 })
+		).toThrow(/victoire/);
+		expect(saisie({ mode: 'score', pickSide: 'home' })).toThrow(/entre 0 et 99/);
+
+		// Aucun refus n'a ecrase le pronostic du joueur ; le nul predit ci-dessus,
+		// lui, est bien passe, on remet donc l'ecart annonce au depart.
+		m.picks.savePick({ userId: joueurId, gameId, mode: 'margin', pickSide: 'home', marginPred: 14 });
+		expect(m.picks.weekBoard(semaineId, joueurId)[0].pick).toMatchObject({
+			mode: 'margin',
+			pickSide: 'home',
+			marginPred: 14
+		});
 	});
 
 	it('verrouille des le kickoff, avant meme la fin du match', () => {
@@ -296,6 +373,38 @@ describe('semaine de simulation', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('score les pronostics du mode « vainqueur + ecart »', () => {
+		const { db } = m.db;
+		const { scores } = m.schema;
+		const board = m.picks.weekBoard(semaineId, joueurId);
+
+		const ligne = (gameId: string) =>
+			db
+				.select()
+				.from(scores)
+				.where(and(eq(scores.gameId, gameId), eq(scores.userId, joueurId)))
+				.get();
+
+		// Premier match : 27-13, ecart de 14 annonce sans aucun score predit. Le
+		// bonus d'ecart tombe, celui de score exact reste hors d'atteinte.
+		expect(ligne(board[0].id)).toMatchObject({
+			bonusKind: 'margin',
+			correct: 1,
+			exactMargin: 1,
+			exactScore: 0
+		});
+		expect(ligne(board[0].id)!.points).toBeGreaterThan(0);
+
+		// Troisieme match : 20-20, nul predit sans equipe. Meme bonus, applique a
+		// la moyenne des deux baremes faute d'equipe designee.
+		const nul = ligne(board[2].id)!;
+		const enjeuNul = Math.round(
+			(board[2].basePointsHome! + board[2].basePointsAway!) / 2
+		);
+		expect(nul).toMatchObject({ bonusKind: 'margin', correct: 1, exactScore: 0 });
+		expect(nul.points).toBe(Math.round(enjeuNul * 1.5));
 	});
 
 	it('apparait au classement hebdomadaire mais pas au general', () => {

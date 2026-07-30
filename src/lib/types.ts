@@ -1,4 +1,4 @@
-import type { PickSide } from './scoring';
+import type { PickMode, PickSide } from './scoring';
 
 /**
  * Types partages entre le serveur et les composants. Volontairement hors de
@@ -25,10 +25,16 @@ export interface BoardGame {
 	pHome: number | null;
 	pAway: number | null;
 	fallbackOdds: boolean;
+	/**
+	 * Le pronostic tel qu'il a ete saisi. Selon `mode`, ce sont les deux scores
+	 * ou l'ecart qui portent l'information ; l'autre paire est vide.
+	 */
 	pick: {
-		pickSide: PickSide;
-		scoreHomePred: number;
-		scoreAwayPred: number;
+		mode: PickMode;
+		pickSide: PickSide | null;
+		scoreHomePred: number | null;
+		scoreAwayPred: number | null;
+		marginPred: number | null;
 		updatedAt: number;
 	} | null;
 	points: number | null;

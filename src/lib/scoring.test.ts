@@ -6,7 +6,10 @@ import {
 	devig,
 	impliedProbabilityRaw,
 	isPickConsistent,
+	pickInputFromRow,
 	playoffMultiplier,
+	predictedDiff,
+	stakePoints,
 	stakesFromMoneylines,
 	type ScoringConfig
 } from './scoring';
@@ -187,6 +190,208 @@ describe('match nul', () => {
 	});
 });
 
+describe('mode « vainqueur + ecart »', () => {
+	// GAME : 31 pts cote locaux, 125 cote visiteurs. Un nul predit ne designant
+	// aucune equipe, son enjeu est la moyenne des deux : round(156 / 2) = 78.
+	const ENJEU_NUL = 78;
+
+	it('ecart exact : +50 %', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 4 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(r.points).toBe(47); // round(31 * 1,5)
+		expect(r.bonusKind).toBe('margin');
+		expect(r.exactMargin).toBe(true);
+		expect(r.correct).toBe(true);
+	});
+
+	it('ecart rate mais bon vainqueur : la base, sans bonus', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 10 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(r.points).toBe(31);
+		expect(r.bonusKind).toBe('none');
+		expect(r.exactMargin).toBe(false);
+		expect(r.correct).toBe(true);
+	});
+
+	it('mauvais vainqueur : zero, meme avec le bon ecart', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: 'away', marginPred: 4 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(r.points).toBe(0);
+		expect(r.correct).toBe(false);
+	});
+
+	it('jamais eligible au x2 : aucun score n\'est predit', () => {
+		// Meme match, meme ecart exact : le mode score qui tombe pile touche 62
+		// pts (31 x 2), le mode ecart plafonne a 47 (31 x 1,5).
+		const ecart = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 4 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		const score = computeScore(
+			{ pickSide: 'home', scoreHomePred: 24, scoreAwayPred: 20 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(ecart.points).toBe(47);
+		expect(ecart.exactScore).toBe(false);
+		expect(score.points).toBe(62);
+		expect(score.exactScore).toBe(true);
+	});
+
+	it('detail base + bonus coherent avec le total', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 4 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(r.basePoints).toBe(31);
+		expect(r.bonusPoints).toBe(16);
+		expect(r.basePoints + r.bonusPoints).toBe(r.points);
+	});
+
+	it('nul predit et match nul : +50 % sur la moyenne des deux baremes', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: null, marginPred: 0 },
+			GAME,
+			{ scoreHome: 20, scoreAway: 20 },
+			cfg
+		);
+		expect(r.points).toBe(Math.round(ENJEU_NUL * 1.5)); // 117
+		expect(r.bonusKind).toBe('margin');
+		expect(r.correct).toBe(true);
+		expect(r.exactScore).toBe(false);
+		expect(r.exactMargin).toBe(true);
+	});
+
+	it('nul predit et match avec vainqueur : zero, aucune equipe a crediter', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: null, marginPred: 0 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		);
+		expect(r.points).toBe(0);
+		expect(r.correct).toBe(false);
+	});
+
+	it('equipe choisie et match nul : 50 % de son bareme, comme en mode score', () => {
+		const away = computeScore(
+			{ mode: 'margin', pickSide: 'away', marginPred: 7 },
+			GAME,
+			{ scoreHome: 20, scoreAway: 20 },
+			cfg
+		);
+		expect(away.points).toBe(63); // round(125 * 0,5)
+		expect(away.bonusKind).toBe('draw');
+		expect(away.correct).toBe(false);
+
+		const home = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 4 },
+			GAME,
+			{ scoreHome: 20, scoreAway: 20 },
+			cfg
+		);
+		expect(home.points).toBe(16); // round(31 * 0,5)
+		expect(home.bonusKind).toBe('draw');
+	});
+
+	it('suit le multiplicateur de playoffs', () => {
+		const r = computeScore(
+			{ mode: 'margin', pickSide: 'home', marginPred: 4 },
+			{ ...GAME, multiplier: 2 },
+			{ scoreHome: 24, scoreAway: 20 },
+			{ ...cfg, playoffsEnabled: true }
+		);
+		expect(r.points).toBe(93); // round(31 * 1,5 * 2)
+	});
+
+	it('deux appels identiques donnent le meme resultat', () => {
+		const args = [
+			{ mode: 'margin' as const, pickSide: 'home' as const, marginPred: 4 },
+			GAME,
+			{ scoreHome: 24, scoreAway: 20 },
+			cfg
+		] as const;
+		expect(computeScore(...args)).toEqual(computeScore(...args));
+	});
+});
+
+describe('ecart predit et enjeu, quel que soit le mode', () => {
+	it('derive un ecart signe des deux modes', () => {
+		expect(predictedDiff({ pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 20 })).toBe(7);
+		expect(predictedDiff({ pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 27 })).toBe(-7);
+		expect(predictedDiff({ mode: 'margin', pickSide: 'home', marginPred: 7 })).toBe(7);
+		expect(predictedDiff({ mode: 'margin', pickSide: 'away', marginPred: 7 })).toBe(-7);
+		expect(predictedDiff({ mode: 'margin', pickSide: null, marginPred: 0 })).toBe(0);
+	});
+
+	it('prend la moyenne des baremes quand aucune equipe n\'est designee', () => {
+		expect(stakePoints('home', GAME)).toBe(31);
+		expect(stakePoints('away', GAME)).toBe(125);
+		expect(stakePoints(null, GAME)).toBe(78);
+	});
+
+	it('lit une ligne de base sans inventer de valeurs', () => {
+		expect(
+			pickInputFromRow({
+				mode: 'score',
+				pickSide: 'home',
+				scoreHomePred: 27,
+				scoreAwayPred: 20,
+				marginPred: null
+			})
+		).toEqual({ mode: 'score', pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 20 });
+
+		expect(
+			pickInputFromRow({
+				mode: 'margin',
+				pickSide: 'away',
+				scoreHomePred: null,
+				scoreAwayPred: null,
+				marginPred: 3
+			})
+		).toEqual({ mode: 'margin', pickSide: 'away', marginPred: 3 });
+
+		// Ecart 0 : l'equipe est ignoree, un nul predit n'en designe aucune.
+		expect(
+			pickInputFromRow({
+				mode: 'margin',
+				pickSide: 'home',
+				scoreHomePred: null,
+				scoreAwayPred: null,
+				marginPred: 0
+			})
+		).toEqual({ mode: 'margin', pickSide: null, marginPred: 0 });
+
+		// Une ligne d'avant les deux modes n'a pas de `mode` : c'est un score.
+		expect(
+			pickInputFromRow({
+				mode: null,
+				pickSide: 'away',
+				scoreHomePred: 20,
+				scoreAwayPred: 24,
+				marginPred: null
+			})
+		).toEqual({ mode: 'score', pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 24 });
+	});
+});
+
 describe('playoffs', () => {
 	const withPlayoffs: ScoringConfig = { ...cfg, playoffsEnabled: true };
 
@@ -228,6 +433,22 @@ describe('coherence du pronostic', () => {
 
 	it('refuse un score qui contredit le choix', () => {
 		expect(isPickConsistent({ pickSide: 'home', scoreHomePred: 17, scoreAwayPred: 24 })).toBe(false);
+	});
+
+	it('mode ecart : un ecart de 1 point ou plus designe une equipe', () => {
+		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 1 })).toBe(true);
+		expect(isPickConsistent({ mode: 'margin', pickSide: 'away', marginPred: 21 })).toBe(true);
+		expect(isPickConsistent({ mode: 'margin', pickSide: null, marginPred: 7 })).toBe(false);
+	});
+
+	it('mode ecart : un ecart de 0 (nul predit) n\'en designe aucune', () => {
+		expect(isPickConsistent({ mode: 'margin', pickSide: null, marginPred: 0 })).toBe(true);
+		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 0 })).toBe(false);
+	});
+
+	it('mode ecart : refuse un ecart negatif ou fractionnaire', () => {
+		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: -3 })).toBe(false);
+		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 3.5 })).toBe(false);
 	});
 });
 

@@ -221,6 +221,9 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 		)
 		.get({ userId, season }) as any;
 
+	// `pick_side IS NOT NULL` ecarte le nul predit sans equipe (mode « ecart ») :
+	// aucune probabilite ne lui correspond, il n'a donc pas sa place dans le
+	// palmares des upsets.
 	const upset = sqlite
 		.prepare(
 			`SELECT s.game_id AS gameId, s.points AS points,
@@ -233,7 +236,7 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 			 JOIN odds_snapshots o ON o.game_id = s.game_id
 			 JOIN weeks w ON w.id = s.week_id
 			 WHERE s.user_id = @userId AND s.correct = 1 AND w.season = @season
-				   AND w.test_kind IS NULL
+				   AND w.test_kind IS NULL AND p.pick_side IS NOT NULL
 			 ORDER BY probability ASC, s.points DESC
 			 LIMIT 1`
 		)
@@ -274,8 +277,9 @@ export function playerHistory(userId: number, season = currentSeason()) {
 				g.score_home AS scoreHome, g.score_away AS scoreAway, g.status,
 				g.kickoff_utc AS kickoffUtc,
 				w.label AS weekLabel, w.id AS weekId,
-				p.pick_side AS pickSide, p.score_home_pred AS scoreHomePred,
-				p.score_away_pred AS scoreAwayPred,
+				p.mode AS mode, p.pick_side AS pickSide,
+				p.score_home_pred AS scoreHomePred, p.score_away_pred AS scoreAwayPred,
+				p.margin_pred AS marginPred,
 				o.base_points_home AS basePointsHome, o.base_points_away AS basePointsAway,
 				s.points, s.bonus_kind AS bonusKind, s.correct
 			 FROM picks p

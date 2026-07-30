@@ -1,5 +1,7 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
+	import { PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
+	import { stakePoints } from '$lib/scoring';
 
 	let { data } = $props();
 
@@ -12,6 +14,19 @@
 
 	function percent(value: number): string {
 		return `${Math.round(value * 100)} %`;
+	}
+
+	/** Equipe choisie, ou « Nul » pour un nul predit sans equipe (mode ecart). */
+	function pickedTeam(row: (typeof data.history)[number]): string {
+		if (row.pickSide === 'home') return row.homeAbbr;
+		if (row.pickSide === 'away') return row.awayAbbr;
+		return 'Nul';
+	}
+
+	/** Enjeu du camp choisi ; moyenne des deux baremes pour un nul predit. */
+	function stake(row: (typeof data.history)[number]): string {
+		if (row.basePointsHome === null || row.basePointsAway === null) return '—';
+		return `${stakePoints(row.pickSide, row)} pts en jeu`;
 	}
 </script>
 
@@ -89,12 +104,12 @@
 								<div class="tiny muted"><LocalTime value={row.kickoffUtc} /></div>
 							</td>
 							<td>
-								<strong>{row.pickSide === 'home' ? row.homeAbbr : row.awayAbbr}</strong>
-								<div class="tiny muted">
-									{row.pickSide === 'home' ? row.basePointsHome : row.basePointsAway} pts en jeu
-								</div>
+								<strong>{pickedTeam(row)}</strong>
+								<div class="tiny muted">{stake(row)}</div>
 							</td>
-							<td class="num">{row.scoreAwayPred}–{row.scoreHomePred}</td>
+							<td class="num" title={PICK_MODE_LABEL[row.mode as 'score' | 'margin']}>
+								{pickLabel(row, row.homeAbbr, row.awayAbbr)}
+							</td>
 							<td class="num">
 								{row.status === 'final' ? `${row.scoreAway}–${row.scoreHome}` : '—'}
 							</td>

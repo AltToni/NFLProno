@@ -1,7 +1,8 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
-	import { GAME_STATUS_LABEL } from '$lib/nfl';
+	import { GAME_STATUS_LABEL, PICK_MODE_LABEL, marginLabel, pickLabel } from '$lib/nfl';
+	import { pickInputFromRow, predictedDiff } from '$lib/scoring';
 
 	let { data } = $props();
 
@@ -28,6 +29,11 @@
 
 	function pct(p: number | null | undefined): string {
 		return p === null || p === undefined ? '—' : `${Math.round(p * 100)} %`;
+	}
+
+	/** Le meme pronostic vu comme un ecart signe, quel que soit le mode de saisie. */
+	function ecartPredit(entry: (typeof data.entries)[number]): string {
+		return marginLabel(predictedDiff(pickInputFromRow(entry)), game.homeAbbr, game.awayAbbr);
 	}
 </script>
 
@@ -119,8 +125,7 @@
 				<thead>
 					<tr>
 						<th>Joueur</th>
-						<th>Choix</th>
-						<th class="num">Score predit</th>
+						<th>Prono</th>
 						<th class="num">Points</th>
 					</tr>
 				</thead>
@@ -129,14 +134,20 @@
 						<tr>
 							<td><a href="/joueur/{entry.userId}">{entry.pseudo}</a></td>
 							<td>
-								<strong>{entry.pickSide === 'home' ? game.homeAbbr : game.awayAbbr}</strong>
+								<!-- La forme saisie d'abord — « KC +7 » ou « 27–20 » — puis, pour un
+									 score predit, l'ecart qu'il implique. -->
+								<strong title={PICK_MODE_LABEL[entry.mode]}>
+									{pickLabel(entry, game.homeAbbr, game.awayAbbr)}
+								</strong>
 								{#if entry.correct === true}
 									<span class="badge badge--open">✓</span>
 								{:else if entry.correct === false}
 									<span class="badge">✗</span>
 								{/if}
+								{#if entry.mode === 'score'}
+									<div class="tiny muted">{ecartPredit(entry)}</div>
+								{/if}
 							</td>
-							<td class="num">{entry.scoreAwayPred}–{entry.scoreHomePred}</td>
 							<td class="num">
 								{#if entry.points !== null}
 									<strong>{entry.points}</strong>

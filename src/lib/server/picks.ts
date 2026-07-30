@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db, sqlite } from './db';
 import { games, oddsSnapshots, picks, scores, users, weeks } from './db/schema';
-import { isPickConsistent, type PickSide } from '$lib/scoring';
+import { isPickConsistent, type PickMode, type PickSide } from '$lib/scoring';
 import { ignoreLeKickoff } from '$lib/nfl';
 import type { BoardGame } from '$lib/types';
 import { now } from '$lib/time';
@@ -65,9 +65,11 @@ export function weekBoard(weekId: number, userId: number): BoardGame[] {
 		fallbackOdds: odds?.fallback === 1,
 		pick: pick
 			? {
+					mode: pick.mode,
 					pickSide: pick.pickSide,
 					scoreHomePred: pick.scoreHomePred,
 					scoreAwayPred: pick.scoreAwayPred,
+					marginPred: pick.marginPred,
 					updatedAt: pick.updatedAt
 				}
 			: null,
@@ -81,16 +83,26 @@ export class PickError extends Error {}
 export interface SavePickInput {
 	userId: number;
 	gameId: string;
-	pickSide: PickSide;
-	scoreHomePred: number;
-	scoreAwayPred: number;
+	/** Absent = mode « score », le seul qui existait avant les deux modes. */
+	mode?: PickMode;
+	/** null admis en mode « ecart » seulement, et seulement avec un ecart de 0. */
+	pickSide?: PickSide | null;
+	scoreHomePred?: number | null;
+	scoreAwayPred?: number | null;
+	marginPred?: number | null;
+}
+
+/** Bornes communes aux scores et aux ecarts : un entier de match de football. */
+function isScoreValue(value: unknown): value is number {
+	return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 99;
 }
 
 /**
  * Enregistre ou met a jour un pronostic.
  *
  * Le verrouillage au kickoff est verifie ici, cote serveur, independamment de
- * l'interface (critere d'acceptation 3).
+ * l'interface (critere d'acceptation 3). Idem pour les regles propres a chaque
+ * mode de saisie : l'interface ne fait que les refleter.
  */
 export function savePick(input: SavePickInput): void {
 	const game = db.select().from(games).where(eq(games.id, input.gameId)).get();
@@ -110,27 +122,74 @@ export function savePick(input: SavePickInput): void {
 		throw new PickError('Ce match est reporte ou annule.');
 	}
 
-	if (input.pickSide !== 'home' && input.pickSide !== 'away') {
-		throw new PickError('Equipe choisie invalide.');
+	const mode: PickMode = input.mode ?? 'score';
+	if (mode !== 'score' && mode !== 'margin') {
+		throw new PickError('Mode de saisie invalide.');
 	}
 
-	for (const value of [input.scoreHomePred, input.scoreAwayPred]) {
-		if (!Number.isInteger(value) || value < 0 || value > 99) {
-			throw new PickError('Les scores doivent etre des entiers entre 0 et 99.');
+	// Colonnes effectivement ecrites : un mode ne remplit jamais celles de
+	// l'autre, pour qu'une ligne ne puisse pas raconter deux pronostics.
+	let values: {
+		pickSide: PickSide | null;
+		scoreHomePred: number | null;
+		scoreAwayPred: number | null;
+		marginPred: number | null;
+	};
+
+	if (mode === 'margin') {
+		const marginPred = input.marginPred;
+		if (!isScoreValue(marginPred)) {
+			throw new PickError("L'ecart predit doit etre un entier entre 0 et 99.");
 		}
-	}
 
-	if (
-		!isPickConsistent({
+		// La regle de reference est `isPickConsistent` ; on la deroule ici pour
+		// dire au joueur laquelle des deux moities lui manque.
+		const side = input.pickSide ?? null;
+		if (marginPred === 0 && side !== null) {
+			throw new PickError(
+				'Un match nul ne designe aucune equipe : retire l\'equipe, ou saisis un ecart d\'au moins 1 point.'
+			);
+		}
+		if (marginPred >= 1 && side !== 'home' && side !== 'away') {
+			throw new PickError(
+				'Choisis l\'equipe gagnante, ou « Match nul » pour un ecart de 0 point.'
+			);
+		}
+
+		values = { pickSide: side, scoreHomePred: null, scoreAwayPred: null, marginPred };
+	} else {
+		if (input.pickSide !== 'home' && input.pickSide !== 'away') {
+			throw new PickError('Equipe choisie invalide.');
+		}
+
+		const scoreHomePred = input.scoreHomePred;
+		const scoreAwayPred = input.scoreAwayPred;
+		for (const value of [scoreHomePred, scoreAwayPred]) {
+			if (!isScoreValue(value)) {
+				throw new PickError('Les scores doivent etre des entiers entre 0 et 99.');
+			}
+		}
+
+		if (
+			!isPickConsistent({
+				mode: 'score',
+				pickSide: input.pickSide,
+				scoreHomePred: scoreHomePred as number,
+				scoreAwayPred: scoreAwayPred as number
+			})
+		) {
+			const picked = input.pickSide === 'home' ? game.homeAbbr : game.awayAbbr;
+			throw new PickError(
+				`Le score predit ne donne pas la victoire a ${picked}. Corrige le score ou change d'equipe.`
+			);
+		}
+
+		values = {
 			pickSide: input.pickSide,
-			scoreHomePred: input.scoreHomePred,
-			scoreAwayPred: input.scoreAwayPred
-		})
-	) {
-		const picked = input.pickSide === 'home' ? game.homeAbbr : game.awayAbbr;
-		throw new PickError(
-			`Le score predit ne donne pas la victoire a ${picked}. Corrige le score ou change d'equipe.`
-		);
+			scoreHomePred: scoreHomePred as number,
+			scoreAwayPred: scoreAwayPred as number,
+			marginPred: null
+		};
 	}
 
 	const ts = now();
@@ -138,20 +197,14 @@ export function savePick(input: SavePickInput): void {
 		.values({
 			userId: input.userId,
 			gameId: input.gameId,
-			pickSide: input.pickSide,
-			scoreHomePred: input.scoreHomePred,
-			scoreAwayPred: input.scoreAwayPred,
+			mode,
+			...values,
 			createdAt: ts,
 			updatedAt: ts
 		})
 		.onConflictDoUpdate({
 			target: [picks.userId, picks.gameId],
-			set: {
-				pickSide: input.pickSide,
-				scoreHomePred: input.scoreHomePred,
-				scoreAwayPred: input.scoreAwayPred,
-				updatedAt: ts
-			}
+			set: { mode, ...values, updatedAt: ts }
 		})
 		.run();
 }
@@ -167,9 +220,12 @@ export interface GameDetail {
 		userId: number;
 		pseudo: string;
 		avatar: string | null;
-		pickSide: PickSide;
-		scoreHomePred: number;
-		scoreAwayPred: number;
+		/** Le mode et les champs bruts : la page match reaffiche la forme saisie. */
+		mode: PickMode;
+		pickSide: PickSide | null;
+		scoreHomePred: number | null;
+		scoreAwayPred: number | null;
+		marginPred: number | null;
 		points: number | null;
 		bonusKind: string | null;
 		correct: boolean | null;
@@ -220,9 +276,11 @@ export function gameDetail(gameId: string): GameDetail | null {
 			userId: row.userId,
 			pseudo: row.pseudo,
 			avatar: row.avatar,
+			mode: row.pick.mode,
 			pickSide: row.pick.pickSide,
 			scoreHomePred: row.pick.scoreHomePred,
 			scoreAwayPred: row.pick.scoreAwayPred,
+			marginPred: row.pick.marginPred,
 			points: row.score?.points ?? null,
 			bonusKind: row.score?.bonusKind ?? null,
 			correct: row.score ? row.score.correct === 1 : null

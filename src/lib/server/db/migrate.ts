@@ -162,6 +162,42 @@ export const MIGRATIONS: string[][] = [
 		`ALTER TABLE weeks ADD COLUMN source_season INTEGER`,
 		`ALTER TABLE weeks ADD COLUMN source_seasontype INTEGER`,
 		`ALTER TABLE weeks ADD COLUMN source_number INTEGER`
+	],
+
+	// --- v3 : deux modes de saisie (vainqueur + ecart, ou score) --------------
+	// La table est reconstruite plutot qu'alteree : trois colonnes doivent
+	// devenir nullables (les scores en mode « ecart », l'equipe pour un nul
+	// predit), ce qu'ALTER TABLE ne sait pas faire en SQLite.
+	//
+	// Les pronostics existants sont tous des scores predits : ils passent en
+	// mode 'score' avec leurs valeurs a l'identique, `margin_pred` reste vide
+	// puisque l'ecart s'y deduit des scores. Aucune ligne n'est perdue, aucune
+	// ne change de sens.
+	//
+	// `picks` n'est la table parente d'aucune autre : le DROP puis le RENAME ne
+	// laissent donc aucune reference pendante, cles etrangeres activees.
+	[
+		`CREATE TABLE picks_v3 (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id),
+			game_id TEXT NOT NULL REFERENCES games(id),
+			mode TEXT NOT NULL DEFAULT 'score',
+			pick_side TEXT,
+			score_home_pred INTEGER,
+			score_away_pred INTEGER,
+			margin_pred INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`INSERT INTO picks_v3 (id, user_id, game_id, mode, pick_side,
+				score_home_pred, score_away_pred, margin_pred, created_at, updated_at)
+			SELECT id, user_id, game_id, 'score', pick_side,
+				score_home_pred, score_away_pred, NULL, created_at, updated_at
+			FROM picks`,
+		`DROP TABLE picks`,
+		`ALTER TABLE picks_v3 RENAME TO picks`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS picks_user_game_uidx ON picks (user_id, game_id)`,
+		`CREATE INDEX IF NOT EXISTS picks_game_idx ON picks (game_id)`
 	]
 ];
 

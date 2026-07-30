@@ -176,10 +176,21 @@ export const picks = sqliteTable(
 		gameId: text('game_id')
 			.notNull()
 			.references(() => games.id),
-		/** cote choisi : 'home' ou 'away' */
-		pickSide: text('pick_side', { enum: ['home', 'away'] }).notNull(),
-		scoreHomePred: integer('score_home_pred').notNull(),
-		scoreAwayPred: integer('score_away_pred').notNull(),
+		/**
+		 * Mode de saisie choisi par le joueur pour ce match :
+		 *   'score'  -> `score_home_pred` / `score_away_pred` remplis, `margin_pred` vide ;
+		 *   'margin' -> `margin_pred` rempli, les deux scores vides.
+		 * Les pronostics d'avant la migration v3 sont tous en 'score'.
+		 */
+		mode: text('mode', { enum: ['score', 'margin'] })
+			.notNull()
+			.default('score'),
+		/** cote choisi : 'home', 'away', ou null pour un nul predit (mode 'margin') */
+		pickSide: text('pick_side', { enum: ['home', 'away'] }),
+		scoreHomePred: integer('score_home_pred'),
+		scoreAwayPred: integer('score_away_pred'),
+		/** ecart absolu predit en mode 'margin' : >= 1 avec equipe, 0 pour un nul */
+		marginPred: integer('margin_pred'),
 		createdAt: integer('created_at').notNull(),
 		updatedAt: integer('updated_at').notNull()
 	},
