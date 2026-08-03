@@ -194,6 +194,24 @@ describe('semaine de simulation', () => {
 		// La vraie semaine 1 est cloturee, la simulation est ouverte : sans
 		// exclusion, c'est elle que verraient les joueurs en arrivant.
 		expect(m.weeks.currentWeek()?.id).toBe(vraieSemaineId);
+		expect(m.weeks.defaultWeek()?.id).toBe(vraieSemaineId);
+	});
+
+	it('devient la semaine affichee quand il n\'y a rien d\'autre a montrer', () => {
+		// Le cas reel : hors saison, aucune vraie semaine n'est encore ouverte.
+		// `currentWeek()` ne renvoie alors rien, et les pages joueur n'affichaient
+		// meme plus la barre d'onglets — la semaine de test etait ouverte, sans
+		// aucun moyen d'y arriver autrement que par un lien de l'admin.
+		const { db } = m.db;
+		const { weeks } = m.schema;
+
+		db.update(weeks).set({ status: 'a_venir' }).where(eq(weeks.id, vraieSemaineId)).run();
+		try {
+			expect(m.weeks.currentWeek()).toBeUndefined();
+			expect(m.weeks.defaultWeek()?.id).toBe(semaineId);
+		} finally {
+			db.update(weeks).set({ status: 'cloturee' }).where(eq(weeks.id, vraieSemaineId)).run();
+		}
 	});
 
 	it("ne fausse pas l'etat du systeme", () => {

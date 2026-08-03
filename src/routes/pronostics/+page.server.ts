@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireUser } from '$lib/server/guards';
 import { PickError, savePick, weekBoard } from '$lib/server/picks';
-import { currentWeek, getWeekById, listVisibleWeeks } from '$lib/server/weeks';
+import { defaultWeek, getWeekById, listVisibleWeeks } from '$lib/server/weeks';
 import { getScoringConfig } from '$lib/server/settings';
 import { playoffMultiplier } from '$lib/scoring';
 
@@ -13,7 +13,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const requested = Number(url.searchParams.get('semaine'));
 	const week =
 		(Number.isFinite(requested) && requested > 0 ? getWeekById(requested) : undefined) ??
-		currentWeek();
+		defaultWeek();
 
 	if (!week) {
 		return { week: null, weeks, games: [], multiplier: 1 };

@@ -126,6 +126,7 @@
 				{#if data.multiplier !== 1}
 					· multiplicateur ×{data.multiplier}
 				{/if}
+				· <a href="/regles" style="text-decoration:underline">comment sont calcules les points ?</a>
 			</p>
 		</div>
 		{#if nextKickoff}

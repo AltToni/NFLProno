@@ -1,7 +1,7 @@
 import type { PageServerLoad } from './$types';
 import { requireUser } from '$lib/server/guards';
 import { rankEvolution, seasonStandings, weekStandings } from '$lib/server/standings';
-import { currentWeek, getWeekById, listVisibleWeeks } from '$lib/server/weeks';
+import { defaultWeek, getWeekById, listVisibleWeeks } from '$lib/server/weeks';
 
 export const load: PageServerLoad = async ({ locals, url }) => {
 	requireUser(locals);
@@ -10,7 +10,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const requested = Number(url.searchParams.get('semaine'));
 	const week =
 		(Number.isFinite(requested) && requested > 0 ? getWeekById(requested) : undefined) ??
-		currentWeek();
+		defaultWeek();
 
 	return {
 		season: seasonStandings(),

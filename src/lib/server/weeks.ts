@@ -61,12 +61,11 @@ export function listVisibleWeeks(season = currentSeason()): Week[] {
 }
 
 /**
- * Semaine affichee par defaut : la derniere semaine ouverte, sinon la derniere
+ * Semaine de reference du jeu : la derniere semaine ouverte, sinon la derniere
  * semaine cloturee.
  *
  * Jamais une semaine de test : creer un bac a sable ne doit pas deplacer la
- * page d'accueil des joueurs ni la cible du rappel du jeudi. On y accede par
- * son onglet, explicitement.
+ * cible du rappel du jeudi ni celle de la cloture automatique.
  */
 export function currentWeek(season = currentSeason()): Week | undefined {
 	const open = db
@@ -83,6 +82,23 @@ export function currentWeek(season = currentSeason()): Week | undefined {
 		.where(and(eq(weeks.season, season), isNull(weeks.testKind), eq(weeks.status, 'cloturee')))
 		.orderBy(desc(weeks.seasontype), desc(weeks.number))
 		.get();
+}
+
+/**
+ * Semaine ouverte par les pages joueur quand l'URL n'en demande aucune.
+ *
+ * C'est `currentWeek()` tant qu'il existe une vraie semaine jouable, et le
+ * premier onglet sinon. Cette seconde branche est ce qui rend les semaines de
+ * test accessibles hors saison : `currentWeek()` les exclut deliberement, mais
+ * hors saison elle ne renvoie *rien*, et les pages n'affichaient alors meme
+ * plus la barre d'onglets — la semaine de test existait, ouverte, sans aucun
+ * chemin pour l'atteindre depuis l'interface joueur.
+ *
+ * `listVisibleWeeks` classant les vraies semaines devant, une semaine de test
+ * n'arrive ici en tete que s'il n'y a rien d'autre a montrer.
+ */
+export function defaultWeek(season = currentSeason()): Week | undefined {
+	return currentWeek(season) ?? listVisibleWeeks(season)[0];
 }
 
 export function weekGames(weekId: number) {

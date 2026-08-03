@@ -9,6 +9,7 @@
 			{ href: '/pronostics', label: 'Mes pronos' },
 			{ href: '/classement', label: 'Classement' },
 			{ href: `/joueur/${data.user?.id ?? ''}`, label: 'Mon profil' },
+			{ href: '/regles', label: 'Regles' },
 			...(data.user?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : [])
 		].filter((l) => data.user)
 	);

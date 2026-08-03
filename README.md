@@ -274,6 +274,20 @@ split « rate de peu ».
 Le module `src/lib/scoring.ts` est pur (ni base ni reseau) et couvert par
 `npm test`.
 
+### La page `/regles`
+
+Tout ce qui precede est explique aux joueurs sur `/regles`, accessible depuis la
+barre de navigation et depuis l'en-tete de la grille. L'exemple y est **fige** —
+le meme `LV @ KC` a chaque visite — mais ses points ne sont pas ecrits en dur :
+la page les fait calculer par `computeScore`, avec la configuration courante.
+Une constante modifiee dans `/admin` est donc repercutee sur l'exemple, et la
+page ne peut pas se mettre a decrire un barème qui n'est plus celui applique.
+
+Le facteur affiche a cote de chaque ligne (« 31 × 1,375 ») vient du barème, pas
+d'un `points / enjeu` : les points etant arrondis a l'entier, le quotient
+donnerait des facteurs qui ne sont la règle de personne — 43 / 31 vaut 1,387,
+la ou le barème dit ×1,375.
+
 ---
 
 ## 5. Architecture
@@ -300,6 +314,7 @@ src/
     match/[id]/           pronostics du groupe + points
     classement/           general, hebdo, graphe d'evolution
     joueur/[id]/          historique et statistiques
+    regles/               explication du bareme, exemple chiffre
     admin/                invitations, taches, reglages, corrections
 ```
 
@@ -602,11 +617,17 @@ les identifiants de match sont prefixes `TEST-SIM-`.
   de l'historique du profil joueur. Elle n'apparait que dans le classement
   **hebdomadaire** de sa propre semaine — c'est la qu'on verifie que les points
   ont bien ete calcules ;
-- n'est jamais la semaine affichee par defaut, ni la cible du rappel du jeudi ;
+- n'est jamais la cible du rappel du jeudi ni de la cloture automatique
+  (`currentWeek()` les exclut) ;
 - occupe un numero reserve (90-99), hors d'atteinte du calendrier reel, et un
   snapshot lance sur ce numero est refuse plutot que d'ecraser la semaine.
 
-Elle reste visible de tous les joueurs, marquee comme telle.
+Elle reste visible de tous les joueurs, marquee comme telle, et son onglet
+passe **apres** les vraies semaines. Elle ne devient la semaine ouverte par
+defaut que s'il n'y a rien d'autre a montrer — le cas hors saison, ou aucune
+vraie semaine n'est encore ouverte. C'est `defaultWeek()`, distincte de
+`currentWeek()` justement pour que cette tolerance d'affichage ne deborde pas
+sur les crons.
 
 **Purge.** « Supprimer les semaines TEST » efface les semaines marquees et tout
 ce qui en depend — points, pronostics, barèmes figes, matchs — dans l'ordre des
