@@ -1,8 +1,11 @@
 name: Image Docker
 
-# Publie l'image sur GHCR a chaque push sur main. Les tests tournent d'abord :
-# une image cassee ne doit jamais atteindre le registre, encore moins pendant la
-# saison ou le conteneur redemarre tout seul.
+# Publie l'image sur GHCR a chaque push sur main, puis deploie en production.
+# Les tests tournent d'abord : une image cassee ne doit jamais atteindre le
+# registre, encore moins pendant la saison ou le conteneur redemarre tout seul.
+#
+# Secrets attendus pour le job « deployer » : DEPLOY_HOST, DEPLOY_USER,
+# DEPLOY_SSH_KEY, et DEPLOY_KNOWN_HOSTS (facultatif mais recommande).
 
 on:
   push:
@@ -97,7 +100,7 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "Deploiement : \`docker compose pull && docker compose up -d\`" >> $GITHUB_STEP_SUMMARY
+          echo "Deploiement : automatique, voir le job « Deploiement en production »." >> $GITHUB_STEP_SUMMARY
 
   fumee:
     name: Test de fumee du compose de production
@@ -300,3 +303,103 @@ jobs:
       - name: Arret et nettoyage
         if: always()
         run: docker compose -f $COMPOSE down -v || true
+
+  deployer:
+    name: Deploiement en production
+    runs-on: ubuntu-latest
+    # Toute la chaine doit etre verte : les tests, l'image publiee sur GHCR, et
+    # les deux jobs qui exercent le compose de production. `needs` echoue en
+    # cascade, donc un rouge n'importe ou en amont annule le deploiement.
+    needs: [verifier, publier, fumee, sauvegarde]
+    # Push sur main, ou lancement manuel depuis l'onglet Actions. Jamais depuis
+    # une pull request, ni depuis une branche lancee a la main.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    # Un seul deploiement a la fois. Si deux push s'enchainent, le second annule
+    # le premier : mieux vaut perdre un deploiement intermediaire que voir deux
+    # `docker compose up -d` se marcher dessus sur la meme machine.
+    concurrency:
+      group: deploiement-production
+      cancel-in-progress: true
+
+    permissions:
+      contents: read
+
+    env:
+      # Doit correspondre a PUBLIC_BASE_URL sur le serveur, sinon la verification
+      # CSRF du test de fumee rejettera le POST.
+      URL_PUBLIQUE: https://prono.tyvia.eu
+
+    steps:
+      - name: Preparer la cle SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$DEPLOY_HOST" || { echo "::error::secret DEPLOY_HOST absent"; exit 1; }
+          test -n "$DEPLOY_SSH_KEY" || { echo "::error::secret DEPLOY_SSH_KEY absent"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploiement
+          chmod 600 ~/.ssh/deploiement
+          # Empreinte epinglee si le secret existe. Sinon on interroge le serveur
+          # au moment du deploiement : plus simple a mettre en place, mais ca ne
+          # protege plus d'un detournement au premier contact.
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS absent, empreinte SSH acceptee sans verification"
+            ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Tirer l'image et redemarrer la pile
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/deploiement -o BatchMode=yes -o ConnectTimeout=15 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            'set -euo pipefail; cd /opt/nflprono && docker compose pull && docker compose up -d'
+
+      - name: Attendre que l'application reponde
+        run: |
+          # `up -d` rend la main des que le conteneur est cree ; les migrations
+          # et l'ouverture de la base prennent encore quelques secondes.
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              "$URL_PUBLIQUE/api/health" || echo 000)
+            echo "tentative $i : /api/health -> $code"
+            [ "$code" = 200 ] && exit 0
+            sleep 2
+          done
+          echo "::error::/api/health n'a pas repondu 200 en 60 s"
+          exit 1
+
+      - name: Verifier qu'un formulaire est accepte
+        # Meme controle que le job « fumee », mais contre la vraie URL publique :
+        # c'est le seul endroit ou le reverse proxy, ORIGIN et le certificat TLS
+        # sont reellement dans la boucle. L'adresse est inconnue de la base, donc
+        # aucun mail n'est envoye — la reponse est identique par construction.
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+            -X POST "$URL_PUBLIQUE/connexion?/lien" \
+            -H "Origin: $URL_PUBLIQUE" \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data 'email=deploiement@example.invalid')
+          echo "POST /connexion?/lien -> $code"
+          [ "$code" = 403 ] && { echo "::error::CSRF rejette les formulaires : PUBLIC_BASE_URL correspond-il a $URL_PUBLIQUE ?"; exit 1; }
+          [ "$code" = 200 ] || { echo "::error::attendu 200, obtenu $code"; exit 1; }
+
+      - name: Recapitulatif
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = success ]; then
+            echo "### Deploiement reussi" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Deploiement en echec" >> $GITHUB_STEP_SUMMARY
+            echo "La pile a peut-etre deja redemarre : verifier l'etat du serveur." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- URL : $URL_PUBLIQUE" >> $GITHUB_STEP_SUMMARY
+          echo "- Image : \`sha-${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

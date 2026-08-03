@@ -275,25 +275,72 @@ src/
 
 ## 6. Deploiement
 
-### Image et mise en route
+### Mise a jour : pousser sur `main`
 
-Chaque push sur `main` publie l'image sur GHCR apres passage des tests
-(`.github/workflows/image.yml`). Deux tags : `latest`, et `sha-<commit>` qui est
-immuable — **c'est celui qu'il faut epingler pendant la saison**, `latest`
-bougeant au prochain push.
+**Le deploiement est automatique.** Un push sur `main` declenche
+`.github/workflows/image.yml`, qui enchaine dans l'ordre : tests et typage,
+build et publication de l'image sur GHCR, test de fumee du compose de
+production, aller-retour sauvegarde/restauration, puis le job « Deploiement en
+production ». Chaque etape depend de la precedente : **si quoi que ce soit est
+rouge en amont, rien n'est deploye**.
+
+Le job de deploiement se connecte en SSH au serveur et y execute :
+
+```bash
+cd /opt/nflprono && docker compose pull && docker compose up -d
+```
+
+Puis il verifie le resultat contre l'URL publique : attente de `/api/health` en
+200 (60 s de patience, le temps des migrations), suivie du POST sur
+`/connexion?/lien` qui prouve que la verification CSRF passe reellement derriere
+le reverse proxy. **Si ce test echoue, le job est rouge** — la pile a redemarre,
+mais l'alerte remonte.
+
+Un seul deploiement tourne a la fois (`concurrency`) : deux push rapproches ne
+peuvent pas se marcher dessus, le plus recent annule le precedent.
+
+#### Lancement manuel
+
+Sans nouveau commit — pour rejouer un deploiement apres une intervention sur le
+serveur, ou apres correction d'un secret :
+
+> Onglet **Actions** → workflow **Image Docker** → bouton **Run workflow** →
+> branche `main` → **Run workflow**.
+
+Le declenchement manuel rejoue le pipeline complet, tests compris. En ligne de
+commande : `gh workflow run image.yml --ref main`.
+
+#### Secrets a renseigner
+
+Dans *Settings → Secrets and variables → Actions* :
+
+| Secret | Role |
+|---|---|
+| `DEPLOY_HOST` | Nom d'hote ou IP du serveur |
+| `DEPLOY_USER` | Compte SSH, membre du groupe `docker` |
+| `DEPLOY_SSH_KEY` | Cle privee **sans passphrase**, dediee au deploiement |
+| `DEPLOY_KNOWN_HOSTS` | Facultatif : sortie de `ssh-keyscan -H <hote>`. Sans lui l'empreinte du serveur est acceptee sans verification, et un avertissement apparait dans le job |
+
+L'URL publique verifiee apres deploiement est ecrite dans le workflow
+(`URL_PUBLIQUE`) : elle doit correspondre au `PUBLIC_BASE_URL` du serveur, sinon
+le POST de verification retombe en 403.
+
+### Premiere installation du serveur
+
+A faire une fois, a la main. Le repertoire `/opt/nflprono` doit contenir le
+compose de production (nomme `docker-compose.yml`, ou `compose.yaml`) et le
+fichier `.env` — le job de deploiement ne fait que `pull` puis `up -d`, il ne
+copie aucun fichier.
+
+L'image est publiee sous deux tags : `latest`, et `sha-<commit>` qui est
+immuable — **c'est celui qu'il faut epingler pendant la saison** si l'on veut
+figer la version, `latest` bougeant a chaque push.
 
 ```bash
 docker login ghcr.io -u AltToni          # PAT avec le scope read:packages
 cp .env.example .env && $EDITOR .env
 mkdir -p backup && sudo chown 1000:1000 backup   # le conteneur ecrit en uid 1000
-docker compose -f docker-compose.prod.yml up -d
-```
-
-Mise a jour :
-
-```bash
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
+docker compose up -d
 ```
 
 Le compose derive `ORIGIN` de `PUBLIC_BASE_URL` et refuse de demarrer si elle
@@ -306,7 +353,7 @@ verification CSRF echoue et **tous les formulaires renvoient 403**.
 `Caddyfile` :
 
 ```
-pronos.mondomaine.eu {
+prono.tyvia.eu {
     reverse_proxy 127.0.0.1:3000
 }
 ```
@@ -318,8 +365,9 @@ la machine hote — ou, pour ne rien exposer, utiliser un Cloudflare Tunnel :
 cloudflared tunnel run --url http://127.0.0.1:3000 pronos
 ```
 
-Dans les deux cas, `PUBLIC_BASE_URL` doit correspondre à l'URL publique, sans
-quoi les magic links pointeront au mauvais endroit.
+Dans les deux cas, `PUBLIC_BASE_URL` doit correspondre à l'URL publique
+(`https://prono.tyvia.eu`), sans quoi les magic links pointeront au mauvais
+endroit — et le deploiement automatique echouera a sa verification finale.
 
 ### VPS EU
 
