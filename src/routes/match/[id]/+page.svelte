@@ -1,7 +1,7 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
-	import { GAME_STATUS_LABEL, PICK_MODE_LABEL, marginLabel, pickLabel } from '$lib/nfl';
+	import { BONUS_LABEL, GAME_STATUS_LABEL, PICK_MODE_LABEL, marginLabel, pickLabel } from '$lib/nfl';
 	import { pickInputFromRow, predictedDiff } from '$lib/scoring';
 
 	let { data } = $props();
@@ -19,13 +19,6 @@
 					: 'draw'
 			: null
 	);
-
-	const BONUS_LABEL: Record<string, string> = {
-		none: '',
-		margin: 'ecart exact',
-		exact: 'score exact',
-		draw: 'match nul'
-	};
 
 	function pct(p: number | null | undefined): string {
 		return p === null || p === undefined ? '—' : `${Math.round(p * 100)} %`;

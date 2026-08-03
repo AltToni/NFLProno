@@ -41,6 +41,22 @@ export interface BoardGame {
 	pickCount: number;
 }
 
+/**
+ * Etat de saisie d'une carte, remonte par `GameCard` a la page `/pronostics`.
+ * La carte ne connait pas la grille ; la page ne connait pas la saisie en cours.
+ * Ces trois booleens sont tout ce qui passe entre les deux, et c'est ce qui
+ * permet au bouton d'enregistrement unique de savoir quoi ecrire et quoi
+ * signaler.
+ */
+export interface EtatCarte {
+	/** Rien du tout n'a ete saisi. */
+	vide: boolean;
+	/** Assez saisi pour etre enregistrable. */
+	complet: boolean;
+	/** Different de ce que le serveur a en base. */
+	modifie: boolean;
+}
+
 export interface StandingRow {
 	userId: number;
 	pseudo: string;

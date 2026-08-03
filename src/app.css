@@ -315,7 +315,7 @@ h3 {
 	margin-top: 0.6rem;
 }
 
-/* Bascule « Vainqueur + ecart » / « Score », un choix par match. */
+/* Bascule « Vainqueur + split » / « Score », un choix par match. */
 .modes {
 	display: flex;
 	gap: 0.3rem;
@@ -326,15 +326,79 @@ h3 {
 	text-align: center;
 }
 
-.pick-margin {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-	flex-wrap: wrap;
+/*
+ * Les huit splits jouables, plus « Match nul ». Grille auto-fit plutot qu'un
+ * nombre de colonnes fixe : sur un telephone etroit les boutons se replient
+ * seuls, sans point de rupture a maintenir.
+ */
+.splits {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(3.6rem, 1fr));
+	gap: 0.35rem;
 	margin-top: 0.6rem;
 }
-.pick-margin input[type='number'] {
-	width: 5rem;
+.split {
+	padding: 0.5rem 0.3rem;
+	border-radius: var(--radius-sm);
+	border: 1.5px solid var(--border);
+	background: var(--surface-2);
+	color: var(--text);
+	font: inherit;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	cursor: pointer;
+	transition:
+		border-color 0.12s ease,
+		background 0.12s ease;
+}
+.split:hover {
+	border-color: #3c4454;
+}
+.split--active {
+	border-color: var(--accent);
+	background: rgba(59, 165, 93, 0.14);
+	color: var(--accent);
+}
+/* « Match nul » n'est pas un ecart : il occupe toute la largeur de sa ligne. */
+.split--nul {
+	grid-column: 1 / -1;
+	font-weight: 500;
+}
+
+.game--error {
+	border-color: #5a2530;
+}
+
+/*
+ * Barre d'enregistrement unique de la grille. Collee en bas de la fenetre : la
+ * page fait seize matchs de haut, un bouton en fin de document serait hors de
+ * vue pendant toute la saisie.
+ */
+.barre-saisie {
+	position: sticky;
+	bottom: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.8rem;
+	flex-wrap: wrap;
+	margin-top: 1rem;
+	padding: 0.7rem 0.85rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
+}
+.barre-saisie__etat {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	min-width: 12rem;
+	flex: 1;
+}
+.barre-saisie .btn {
+	white-space: nowrap;
 }
 
 input[type='number'],

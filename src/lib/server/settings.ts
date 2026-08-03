@@ -39,6 +39,14 @@ export const SETTING_DEFS = {
 		max: 5,
 		step: 0.05
 	},
+	'scoring.near_margin_factor': {
+		value: 0.75,
+		label: 'Part du bonus si le split est rate d’un point (mode split)',
+		group: 'Bareme',
+		min: 0,
+		max: 1,
+		step: 0.05
+	},
 	'scoring.exact_bonus_pct': {
 		value: 1,
 		label: 'Bonus score exact (fraction des points de base)',
@@ -170,6 +178,7 @@ export function getScoringConfig() {
 		baseMin: getSetting('scoring.base_min'),
 		baseMax: getSetting('scoring.base_max'),
 		marginBonusPct: getSetting('scoring.margin_bonus_pct'),
+		nearMarginFactor: getSetting('scoring.near_margin_factor'),
 		exactBonusPct: getSetting('scoring.exact_bonus_pct'),
 		drawFactor: getSetting('scoring.draw_factor'),
 		fallbackP: getSetting('scoring.fallback_p'),

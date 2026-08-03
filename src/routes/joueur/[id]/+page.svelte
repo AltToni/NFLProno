@@ -1,16 +1,9 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
-	import { PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
+	import { BONUS_LABEL, PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
 	import { stakePoints } from '$lib/scoring';
 
 	let { data } = $props();
-
-	const BONUS_LABEL: Record<string, string> = {
-		none: '',
-		margin: 'ecart exact',
-		exact: 'score exact',
-		draw: 'nul'
-	};
 
 	function percent(value: number): string {
 		return `${Math.round(value * 100)} %`;

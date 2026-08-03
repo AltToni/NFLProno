@@ -9,6 +9,8 @@ export interface ScoringConfig {
 	baseMin: number;
 	baseMax: number;
 	marginBonusPct: number;
+	/** Part du bonus d'ecart accordee a un split rate d'un point (mode split). */
+	nearMarginFactor: number;
 	exactBonusPct: number;
 	drawFactor: number;
 	fallbackP: number;
@@ -21,12 +23,35 @@ export const DEFAULT_SCORING: ScoringConfig = {
 	baseMin: 25,
 	baseMax: 250,
 	marginBonusPct: 0.5,
+	nearMarginFactor: 0.75,
 	exactBonusPct: 1,
 	drawFactor: 0.5,
 	fallbackP: 0.5,
 	playoffsEnabled: false,
 	playoffMultipliers: { 1: 1.5, 2: 2, 3: 2.5, 4: 1, 5: 3 }
 };
+
+/**
+ * Les seuls splits jouables. L'espacement de 3 points n'est pas cosmetique : il
+ * fait qu'un ecart reel donne est a distance 0 ou 1 d'**exactement un** split,
+ * jamais de deux, jamais d'aucun (entre 2 et 25). Il y a donc toujours un seul
+ * bon choix, et les fourchettes de proximite ne se recouvrent pas.
+ *
+ *   reel +6  ->  « +6 » exact,          les autres a 3 ou plus  -> bonus plein
+ *   reel +7  ->  « +6 » a un point,     « +9 » a deux           -> 3/4 du bonus
+ *   reel +8  ->  « +9 » a un point,     « +6 » a deux           -> 3/4 du bonus
+ *
+ * Corollaire : un ecart reel de 1 point (21-20) ne rapporte aucun bonus en mode
+ * split, le premier choix etant a 2 points de la.
+ */
+export const SPLIT_CHOICES = [3, 6, 9, 12, 15, 18, 21, 24] as const;
+
+/** Ecart d'un nul predit : la seule valeur hors liste acceptee en mode split. */
+export const DRAW_MARGIN = 0;
+
+export function isSplitChoice(margin: number): boolean {
+	return (SPLIT_CHOICES as readonly number[]).includes(margin);
+}
 
 /**
  * Moneyline americaine -> probabilite brute (marge du bookmaker incluse).
@@ -70,7 +95,7 @@ export function playoffMultiplier(
 }
 
 export type PickSide = 'home' | 'away';
-export type BonusKind = 'none' | 'margin' | 'exact' | 'draw';
+export type BonusKind = 'none' | 'margin' | 'near' | 'exact' | 'draw';
 
 /**
  * Deux facons de saisir un pronostic, au choix du joueur match par match :
@@ -100,7 +125,11 @@ export interface MarginPick {
 	mode: 'margin';
 	/** null si et seulement si `marginPred` vaut 0 (nul predit). */
 	pickSide: PickSide | null;
-	/** Ecart absolu predit : >= 1 avec une equipe, 0 pour un nul. */
+	/**
+	 * Split predit : une valeur de `SPLIT_CHOICES` avec une equipe, 0 pour un
+	 * nul. Les pronostics anterieurs a la liste fermee peuvent porter n'importe
+	 * quel entier ; le calcul ci-dessous les traite sans cas particulier.
+	 */
 	marginPred: number;
 }
 
@@ -151,6 +180,8 @@ export interface ScoreBreakdown {
 	correct: boolean;
 	exactScore: boolean;
 	exactMargin: boolean;
+	/** Split rate d'un point, bonus partiel obtenu. Exclusif de `exactMargin`. */
+	nearMargin: boolean;
 }
 
 const ZERO = (multiplier: number): ScoreBreakdown => ({
@@ -161,7 +192,8 @@ const ZERO = (multiplier: number): ScoreBreakdown => ({
 	multiplier,
 	correct: false,
 	exactScore: false,
-	exactMargin: false
+	exactMargin: false,
+	nearMargin: false
 });
 
 /**
@@ -169,6 +201,8 @@ const ZERO = (multiplier: number): ScoreBreakdown => ({
  *
  * - vainqueur correct        : base
  * - + ecart exact            : +marginBonusPct x base
+ * - + split rate d'un point  : +marginBonusPct x nearMarginFactor x base
+ *                              (mode `'margin'` uniquement, cf. ci-dessous)
  * - + score exact            : +exactBonusPct x base (remplace le bonus d'ecart)
  * - vainqueur incorrect      : 0 (jamais de points negatifs)
  * - match nul                : drawFactor x base de l'equipe choisie,
@@ -177,6 +211,11 @@ const ZERO = (multiplier: number): ScoreBreakdown => ({
  * Les deux modes de saisie partagent ce calcul : seul l'ecart signe predit
  * change de source, et le mode `'margin'` n'ayant pas de score predit, il
  * n'atteint jamais le bonus de score exact.
+ *
+ * Le bonus de proximite, lui, est **reserve au mode split** : c'est la
+ * contrepartie de sa liste fermee de huit valeurs, ou viser plus juste est
+ * impossible. Le mode score, qui peut annoncer n'importe quel ecart, garde la
+ * regle stricte — ecart exact ou rien.
  */
 export function computeScore(
 	pick: PickInput,
@@ -194,6 +233,15 @@ export function computeScore(
 		pick.scoreHomePred === outcome.scoreHome &&
 		pick.scoreAwayPred === outcome.scoreAway;
 	const exactMargin = predDiff === realDiff;
+	// `realDiff !== 0` : sur un match nul, un split annonce n'est pas « rate de
+	// peu », c'est le mauvais resultat — la branche du nul ci-dessous s'en
+	// charge. La condition n'a d'effet que sur des splits hors liste (1 ou 2),
+	// hors d'atteinte depuis la liste fermee mais possibles en base.
+	const nearMargin =
+		pick.mode === 'margin' &&
+		!exactMargin &&
+		realDiff !== 0 &&
+		Math.abs(realDiff - predDiff) === 1;
 
 	let factor: number;
 	let bonusKind: BonusKind;
@@ -222,6 +270,9 @@ export function computeScore(
 		} else if (exactMargin) {
 			bonusKind = 'margin';
 			factor = 1 + cfg.marginBonusPct;
+		} else if (nearMargin) {
+			bonusKind = 'near';
+			factor = 1 + cfg.marginBonusPct * cfg.nearMarginFactor;
 		} else {
 			bonusKind = 'none';
 			factor = 1;
@@ -239,7 +290,8 @@ export function computeScore(
 		multiplier,
 		correct,
 		exactScore: exactScore && realDiff === predDiff,
-		exactMargin
+		exactMargin,
+		nearMargin: bonusKind === 'near'
 	};
 }
 
@@ -295,16 +347,21 @@ export function stakesFromMoneylines(
  *
  *  - mode `'score'`  : le score predit ne peut pas donner la victoire a
  *    l'equipe qui n'a pas ete choisie. Le nul reste autorise (spec 2.4).
- *  - mode `'margin'` : un ecart de 1 point ou plus designe une equipe, un ecart
- *    de 0 (nul predit) n'en designe aucune.
+ *  - mode `'margin'` : un split de `SPLIT_CHOICES` designe une equipe, un ecart
+ *    de 0 (nul predit) n'en designe aucune, et rien d'autre n'est jouable.
  *
  * Regle de reference, partagee par le controle serveur (`savePick`, qui affine
  * seulement le message d'erreur) et par l'interface.
+ *
+ * Ne s'applique qu'a la **saisie**. Les pronostics deja en base portant un ecart
+ * libre (avant la liste fermee) restent parfaitement calculables : `computeScore`
+ * ne consulte jamais cette fonction.
  */
 export function isPickConsistent(pick: PickInput): boolean {
 	if (pick.mode === 'margin') {
 		if (!Number.isInteger(pick.marginPred) || pick.marginPred < 0) return false;
-		return pick.marginPred === 0 ? pick.pickSide === null : pick.pickSide !== null;
+		if (pick.marginPred === DRAW_MARGIN) return pick.pickSide === null;
+		return pick.pickSide !== null && isSplitChoice(pick.marginPred);
 	}
 	const diff = pick.scoreHomePred - pick.scoreAwayPred;
 	if (diff === 0) return true;

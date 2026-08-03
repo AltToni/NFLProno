@@ -1,7 +1,14 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db, sqlite } from './db';
 import { games, oddsSnapshots, picks, scores, users, weeks } from './db/schema';
-import { isPickConsistent, type PickMode, type PickSide } from '$lib/scoring';
+import {
+	DRAW_MARGIN,
+	isPickConsistent,
+	isSplitChoice,
+	SPLIT_CHOICES,
+	type PickMode,
+	type PickSide
+} from '$lib/scoring';
 import { ignoreLeKickoff } from '$lib/nfl';
 import type { BoardGame } from '$lib/types';
 import { now } from '$lib/time';
@@ -83,9 +90,9 @@ export class PickError extends Error {}
 export interface SavePickInput {
 	userId: number;
 	gameId: string;
-	/** Absent = mode « score », le seul qui existait avant les deux modes. */
+	/** Absent = mode « split », le mode par defaut du jeu. */
 	mode?: PickMode;
-	/** null admis en mode « ecart » seulement, et seulement avec un ecart de 0. */
+	/** null admis en mode « split » seulement, et seulement avec un ecart de 0. */
 	pickSide?: PickSide | null;
 	scoreHomePred?: number | null;
 	scoreAwayPred?: number | null;
@@ -122,7 +129,7 @@ export function savePick(input: SavePickInput): void {
 		throw new PickError('Ce match est reporte ou annule.');
 	}
 
-	const mode: PickMode = input.mode ?? 'score';
+	const mode: PickMode = input.mode ?? 'margin';
 	if (mode !== 'score' && mode !== 'margin') {
 		throw new PickError('Mode de saisie invalide.');
 	}
@@ -145,14 +152,21 @@ export function savePick(input: SavePickInput): void {
 		// La regle de reference est `isPickConsistent` ; on la deroule ici pour
 		// dire au joueur laquelle des deux moities lui manque.
 		const side = input.pickSide ?? null;
-		if (marginPred === 0 && side !== null) {
+		if (marginPred === DRAW_MARGIN && side !== null) {
 			throw new PickError(
-				'Un match nul ne designe aucune equipe : retire l\'equipe, ou saisis un ecart d\'au moins 1 point.'
+				'Un match nul ne designe aucune equipe : retire l\'equipe, ou choisis un split.'
 			);
 		}
-		if (marginPred >= 1 && side !== 'home' && side !== 'away') {
+		if (marginPred !== DRAW_MARGIN && side !== 'home' && side !== 'away') {
 			throw new PickError(
 				'Choisis l\'equipe gagnante, ou « Match nul » pour un ecart de 0 point.'
+			);
+		}
+		// Liste fermee : elle borne le jeu et garantit qu'un ecart reel n'est
+		// jamais a un point de deux splits a la fois (cf. `SPLIT_CHOICES`).
+		if (marginPred !== DRAW_MARGIN && !isSplitChoice(marginPred)) {
+			throw new PickError(
+				`Split invalide : choisis parmi +${SPLIT_CHOICES.join(', +')}, ou « Match nul ».`
 			);
 		}
 

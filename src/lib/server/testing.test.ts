@@ -214,15 +214,15 @@ describe('semaine de simulation', () => {
 	it('accepte les pronostics avant le kickoff, dans les deux modes', () => {
 		const board = m.picks.weekBoard(semaineId, joueurId);
 
-		// Les deux modes cote a cote sur la meme semaine : ecart annonce sur le
-		// premier match (qui finit 27-13, soit 14 d'ecart), nul predit sans equipe
+		// Les deux modes cote a cote sur la meme semaine : split annonce sur le
+		// premier match (qui finit 28-13, soit 15 d'ecart), nul predit sans equipe
 		// sur le troisieme (qui finit 20-20), scores predits sur les deux autres.
 		m.picks.savePick({
 			userId: joueurId,
 			gameId: board[0].id,
 			mode: 'margin',
 			pickSide: 'home',
-			marginPred: 14
+			marginPred: 15
 		});
 		m.picks.savePick({
 			userId: joueurId,
@@ -257,7 +257,7 @@ describe('semaine de simulation', () => {
 		expect(apres[0].pick).toMatchObject({
 			mode: 'margin',
 			pickSide: 'home',
-			marginPred: 14,
+			marginPred: 15,
 			scoreHomePred: null,
 			scoreAwayPred: null
 		});
@@ -277,11 +277,14 @@ describe('semaine de simulation', () => {
 			(input: Omit<Parameters<typeof m.picks.savePick>[0], 'userId' | 'gameId'>) => () =>
 				m.picks.savePick({ userId: joueurId, gameId, ...input });
 
-		// Mode ecart : l'ecart et l'equipe vont ensemble, ou pas du tout.
+		// Mode split : le split et l'equipe vont ensemble, ou pas du tout.
 		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 0 })).toThrow(/nul/);
-		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 5 })).toThrow(/equipe/);
+		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 6 })).toThrow(/equipe/);
 		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 100 })).toThrow(/entre 0 et 99/);
 		expect(saisie({ mode: 'margin', pickSide: 'home' })).toThrow(/entre 0 et 99/);
+		// Et seuls les huit splits proposes sont jouables.
+		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 5 })).toThrow(/Split invalide/);
+		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 25 })).toThrow(/Split invalide/);
 		// Ecart 0 sans equipe, en revanche, c'est un nul predit : parfaitement valide.
 		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 0 })).not.toThrow();
 
@@ -292,12 +295,12 @@ describe('semaine de simulation', () => {
 		expect(saisie({ mode: 'score', pickSide: 'home' })).toThrow(/entre 0 et 99/);
 
 		// Aucun refus n'a ecrase le pronostic du joueur ; le nul predit ci-dessus,
-		// lui, est bien passe, on remet donc l'ecart annonce au depart.
-		m.picks.savePick({ userId: joueurId, gameId, mode: 'margin', pickSide: 'home', marginPred: 14 });
+		// lui, est bien passe, on remet donc le split annonce au depart.
+		m.picks.savePick({ userId: joueurId, gameId, mode: 'margin', pickSide: 'home', marginPred: 15 });
 		expect(m.picks.weekBoard(semaineId, joueurId)[0].pick).toMatchObject({
 			mode: 'margin',
 			pickSide: 'home',
-			marginPred: 14
+			marginPred: 15
 		});
 	});
 
@@ -323,6 +326,7 @@ describe('semaine de simulation', () => {
 				m.picks.savePick({
 					userId: joueurId,
 					gameId: stored[0].id,
+					mode: 'score',
 					pickSide: 'away',
 					scoreHomePred: 10,
 					scoreAwayPred: 30
@@ -334,6 +338,7 @@ describe('semaine de simulation', () => {
 				m.picks.savePick({
 					userId: joueurId,
 					gameId: stored[3].id,
+					mode: 'score',
 					pickSide: 'away',
 					scoreHomePred: 10,
 					scoreAwayPred: 30
@@ -375,7 +380,7 @@ describe('semaine de simulation', () => {
 		}
 	});
 
-	it('score les pronostics du mode « vainqueur + ecart »', () => {
+	it('score les pronostics du mode « vainqueur + split »', () => {
 		const { db } = m.db;
 		const { scores } = m.schema;
 		const board = m.picks.weekBoard(semaineId, joueurId);
@@ -387,8 +392,8 @@ describe('semaine de simulation', () => {
 				.where(and(eq(scores.gameId, gameId), eq(scores.userId, joueurId)))
 				.get();
 
-		// Premier match : 27-13, ecart de 14 annonce sans aucun score predit. Le
-		// bonus d'ecart tombe, celui de score exact reste hors d'atteinte.
+		// Premier match : 28-13, split de 15 annonce sans aucun score predit. Le
+		// bonus d'ecart tombe plein, celui de score exact reste hors d'atteinte.
 		expect(ligne(board[0].id)).toMatchObject({
 			bonusKind: 'margin',
 			correct: 1,

@@ -107,42 +107,93 @@ puis de-vig par normalisation : `p = p_raw / (p_raw_home + p_raw_away)`.
 
 Pour chaque match, le joueur choisit **comment** il pronostique. La bascule est
 sur la carte du match, et le mode retenu est memorise avec le pronostic : deux
-matchs de la meme semaine peuvent etre saisis differemment.
+matchs de la meme semaine peuvent etre saisis differemment. **Le mode par defaut
+est « vainqueur + split ».**
 
 | Mode | Ce qu'on saisit | Bonus accessibles |
 |---|---|---|
-| **A — Vainqueur + ecart** | une equipe et un ecart entier ≥ 1, ou « Match nul » (ecart 0, aucune equipe) | ×1,5 (ecart exact). **Jamais ×2** : aucun score n'est predit |
-| **B — Score** | les deux scores ; l'interface derive et affiche en direct le vainqueur et l'ecart | ×1,5 (ecart exact) et ×2 (score exact) |
+| **A — Vainqueur + split** (defaut) | une equipe et un split parmi **+3 +6 +9 +12 +15 +18 +21 +24**, ou « Match nul » (ecart 0, aucune equipe) | ×1,5 (split exact), ×1,375 (split rate d'un point). **Jamais ×2** : aucun score n'est predit |
+| **B — Score** | les deux scores ; l'interface derive et affiche en direct le vainqueur et l'ecart | ×1,5 (ecart exact) et ×2 (score exact). **Pas de bonus de proximite** |
 
 Les deux modes partagent le meme calcul : l'**ecart signe predit** est la seule
-grandeur qui compte, et elle vient soit de l'ecart annonce, soit de la
-difference des scores. Le mode ne change donc que l'acces au ×2.
+grandeur qui compte, et elle vient soit du split annonce, soit de la difference
+des scores.
 
-Une carte de `/pronostics`, ici en mode A apres avoir choisi KC et un ecart de
-7 points :
+#### Les huit splits, et le bonus de proximite
+
+Le mode A ne propose que huit valeurs, espacees de 3 points. Ce n'est pas un
+detail d'affichage : c'est ce qui rend le bonus de proximite sans ambiguite.
+Tout ecart reel compris entre 2 et 25 est a distance 0 ou 1 d'**exactement un**
+split — jamais de deux, jamais d'aucun. Il y a donc toujours un seul bon choix.
+
+> J'ai mis **+6**. Le match finit sur un ecart de **6** → bonus plein. De **5**
+> ou **7** → les trois quarts du bonus. Tout le reste → rien.
+
+| Ecart reel | +3 | +6 | +9 | +12 |
+|---|---|---|---|---|
+| 3 | ×1,5 | | | |
+| 4 | ×1,375 | | | |
+| 5 | | ×1,375 | | |
+| 6 | | ×1,5 | | |
+| 7 | | ×1,375 | | |
+| 8 | | | ×1,375 | |
+| 9 | | | ×1,5 | |
+
+Deux consequences assumees :
+
+- un match gagne d'**un point** (21–20) ne rapporte aucun bonus en mode A, le
+  premier split etant a 2 points de la ;
+- le mode B, lui, garde la regle stricte — ecart exact ou rien. Le bonus de
+  proximite est la contrepartie de la liste fermee, ou viser plus juste est
+  impossible ; en mode score, on peut annoncer n'importe quel ecart.
+
+La fraction (3/4) est le reglage `scoring.near_margin_factor`, editable dans
+`/admin` comme les autres constantes. A 0, le bonus de proximite disparait.
+
+Une carte de `/pronostics`, ici en mode A apres avoir choisi KC et un split de
+6 points :
 
 ```
  19:00                                        dans 2 j 4 h · details
 
-   [ Vainqueur + ecart ]   [        Score       ]   <- bascule par match
+   [ Vainqueur + split ]   [        Score       ]   <- bascule par match
 
      LV  125 pts      @      KC  31 pts             <- choix en vert
 
-   [ Match nul ]   ecart de [ 7 ]  points
+   [            Match nul            ]
+   [ +3 ] [ +6 ] [ +9 ] [ +12 ]                     <- +6 en vert
+   [ +15 ] [ +18 ] [ +21 ] [ +24 ]
 
-   Soit KC +7 — ×1,5 si l'ecart est exact, jamais de ×2.
+   Soit KC +6 — ×1,5 si le split est exact, ×1,375 s'il est rate
+   d'un point, jamais de ×2.
 ```
 
-En mode B, la ligne « ecart de » cede la place aux deux cases de score, et la
+En mode B, la grille de splits cede la place aux deux cases de score, et la
 ligne d'apercu suit la frappe : `Soit KC +7 — ×1,5 si l'ecart est exact, ×2 si
-le score l'est`. Le vainqueur y est **derive** du score, il n'y a donc plus de
-contradiction possible entre les deux ; le refus des scores incoherents reste en
-place cote serveur. Un score nul (`20–20`) est le seul cas ou le joueur designe
-encore une equipe à la main : elle decide des points si le match ne finit
-finalement pas nul.
+le score l'est. Pas de bonus de proximite`. Le vainqueur y est **derive** du
+score, il n'y a donc plus de contradiction possible entre les deux ; le refus
+des scores incoherents reste en place cote serveur. Un score nul (`20–20`) est
+le seul cas ou le joueur designe encore une equipe à la main : elle decide des
+points si le match ne finit finalement pas nul.
+
+#### Un seul bouton pour toute la grille
+
+`/pronostics` n'a **qu'un bouton « Enregistrer »**, dans une barre collee en bas
+de l'ecran, et il envoie les seize matchs d'un coup. La barre dit en permanence
+ou on en est :
+
+```
+  3 match(s) sans pronostic — TB @ CIN, NO @ DET,
+  NYJ @ TEN. Sans pronostic, c'est 0 point.        [ Enregistrer (5) ]
+```
+
+Chaque carte est traitee independamment cote serveur : une saisie incomplete ou
+refusee **n'empeche jamais les autres d'etre ecrites**, elle remonte comme
+message rouge sur sa propre carte. Une carte a laquelle on n'a pas touche n'est
+pas une erreur — c'est un avertissement, et rien n'est reecrit inutilement.
 
 Sur `/match/<id>`, les pronostics du groupe sont affiches **sous la forme
-saisie** — « KC +7 » ou « 27–20 », avec l'ecart derive en dessous pour un score
+saisie** — « KC +6 » ou « 27–20 », avec l'ecart derive en dessous pour un score
 predit : on voit ce que chacun a joue, et comment.
 
 ### Points
@@ -155,7 +206,8 @@ base  = clamp(round(25 / p), 25, 250)
 |---|---|
 | Vainqueur correct | `base` |
 | + ecart exact | `base × 1,5` |
-| + score exact (mode B uniquement) | `base × 2` (remplace le bonus d'ecart) |
+| + split rate d'un point (**mode A uniquement**) | `base × 1,375` — soit 3/4 du bonus d'ecart |
+| + score exact (**mode B uniquement**) | `base × 2` (remplace le bonus d'ecart) |
 | Vainqueur incorrect | 0 |
 | Match nul | `base × 0,5` de l'equipe choisie |
 | Match nul predit (ecart 0) | `base × 1,5` |
@@ -173,20 +225,28 @@ Toutes ces constantes sont en base (`settings`) et editables dans `/admin`.
 **KC 24 – LV 20**. Les scores predits se lisent dans l'ordre de l'interface,
 **visiteurs–locaux**, soit `LV–KC` :
 
+L'ecart reel est de **4 points**, qui n'est pas un split jouable : le seul choix
+qui rapporte quelque chose en mode A est `+3`, a un point de la.
+
 | Pronostic saisi | Mode | Points |
 |---|---|---|
-| `KC +4` | A | 47 — vainqueur + ecart exact : `round(31 × 1,5)` |
-| `KC +10` | A | 31 — bon vainqueur, ecart rate |
-| `LV +4` | A | 0 — mauvais vainqueur |
+| `KC +3` | A | 43 — split rate d'un point : `round(31 × 1,375)` |
+| `KC +6` | A | 31 — bon vainqueur, split a 2 points : rien de plus |
+| `LV +3` | A | 0 — mauvais vainqueur |
 | `Match nul` | A | 0 — le match a un vainqueur, aucune equipe n'etait designee |
 | `20–24` | B | 62 — score exact : `31 × 2` |
 | `23–27` | B | 47 — ecart exact (KC +4), score rate |
+| `22–25` | B | 31 — ecart de 3 contre 4 reel : **le mode B n'a pas de bonus de proximite** |
 | `10–30` | B | 31 — bon vainqueur, rien de plus |
+
+Les deux dernieres lignes sont la difference entre les modes : le meme ecart
+annonce (+3 contre 4 reel) vaut 43 pts en mode A et 31 en mode B.
 
 Si ce meme match avait fini **20 – 20**, un `Match nul` (mode A) aurait rapporte
 `round(78 × 1,5)` = 117 pts, 78 etant la moyenne des deux baremes (voir
-interpretation 3 ci-dessous), et un `KC +4` aurait touche `round(31 × 0,5)` =
-16 pts au titre du match nul.
+interpretation 3 ci-dessous), et un `KC +3` aurait touche `round(31 × 0,5)` =
+16 pts au titre du match nul — un match nul reel n'est jamais traite comme un
+split « rate de peu ».
 
 **Trois points d'interpretation de la spec**, à trancher avant le coup d'envoi :
 
@@ -200,7 +260,11 @@ interpretation 3 ci-dessous), et un `KC +4` aurait touche `round(31 × 0,5)` =
    victoire à l'equipe non choisie est refuse (cote client **et** serveur). Le
    nul reste autorise quelle que soit l'equipe choisie, puisque la spec le
    prevoit explicitement. Cote mode A, le controle serveur exige la meme
-   coherence : un ecart ≥ 1 designe une equipe, un ecart 0 n'en designe aucune.
+   coherence : un split de la liste designe une equipe, un ecart 0 n'en designe
+   aucune, et rien d'autre n'est jouable. Les pronostics enregistres **avant**
+   la fermeture de la liste (un `+7`, par exemple) restent valables et se
+   calculent normalement, bonus de proximite compris ; seule leur ressaisie est
+   refusee, et la carte le signale.
 3. *Enjeu d'un nul predit en mode A.* « Match nul » ne choisit pas d'equipe,
    donc aucun des deux baremes ne s'impose. Les points en jeu sont la **moyenne
    des deux**, seule valeur neutre. Consequence assumee : si le match a

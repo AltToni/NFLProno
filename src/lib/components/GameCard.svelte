@@ -1,30 +1,28 @@
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import type { BoardGame } from '$lib/types';
+	import type { BoardGame, EtatCarte } from '$lib/types';
 	import LocalTime from './LocalTime.svelte';
 	import Countdown from './Countdown.svelte';
 	import { GAME_STATUS_LABEL, marginLabel, pickLabel } from '$lib/nfl';
-	import type { PickMode, PickSide } from '$lib/scoring';
+	import { SPLIT_CHOICES, type PickMode, type PickSide } from '$lib/scoring';
 
 	let {
 		game,
 		error = null,
-		saved = false
+		report
 	}: {
 		game: BoardGame;
 		error?: string | null;
-		saved?: boolean;
+		report?: (etat: EtatCarte) => void;
 	} = $props();
 
-	let mode = $state<PickMode>('score');
+	/** Le mode par defaut du jeu : vainqueur + split. */
+	let mode = $state<PickMode>('margin');
 	let side = $state<PickSide | null>(null);
-	/** Mode « ecart » : « Match nul » = ecart 0 et aucune equipe designee. */
+	/** Mode split : « Match nul » = ecart 0 et aucune equipe designee. */
 	let nul = $state(false);
 	let margin = $state<number | null>(null);
 	let homeScore = $state<number | null>(null);
 	let awayScore = $state<number | null>(null);
-	let saving = $state(false);
-	let justSaved = $state(false);
 
 	/**
 	 * Les champs suivent le pronostic renvoye par le serveur : initialisation au
@@ -36,7 +34,7 @@
 	 */
 	$effect(() => {
 		const pick = game.pick;
-		mode = pick?.mode ?? 'score';
+		mode = pick?.mode ?? 'margin';
 		side = pick?.pickSide ?? null;
 		nul = pick?.mode === 'margin' && pick.marginPred === 0;
 		margin = pick?.marginPred ?? null;
@@ -63,9 +61,27 @@
 		side = derivedDiff > 0 ? 'home' : 'away';
 	});
 
-	const complete = $derived(
+	/**
+	 * Un split hors liste : un pronostic d'avant la liste fermee, ou repris d'une
+	 * saisie libre. Il reste valable et se calcule normalement, mais il faut le
+	 * rejouer pour pouvoir reenregistrer la carte.
+	 */
+	const splitHorsListe = $derived(
+		mode === 'margin' &&
+			!nul &&
+			margin !== null &&
+			!(SPLIT_CHOICES as readonly number[]).includes(margin)
+	);
+
+	const vide = $derived(
 		mode === 'margin'
-			? nul || (side !== null && margin !== null && margin >= 1)
+			? !nul && side === null && margin === null
+			: side === null && homeScore === null && awayScore === null
+	);
+
+	const complet = $derived(
+		mode === 'margin'
+			? nul || (side !== null && margin !== null && !splitHorsListe)
 			: side !== null && homeScore !== null && awayScore !== null
 	);
 
@@ -77,14 +93,10 @@
 	const previewDiff = $derived.by(() => {
 		if (mode !== 'margin') return derivedDiff;
 		if (nul) return 0;
-		return side !== null && margin !== null && margin >= 1
-			? side === 'home'
-				? margin
-				: -margin
-			: null;
+		return side !== null && margin !== null ? (side === 'home' ? margin : -margin) : null;
 	});
 
-	const dirty = $derived.by(() => {
+	const modifie = $derived.by(() => {
 		const pick = game.pick;
 		if (!pick || pick.mode !== mode) return true;
 		if (mode === 'margin') {
@@ -95,6 +107,13 @@
 			homeScore !== pick.scoreHomePred ||
 			awayScore !== pick.scoreAwayPred
 		);
+	});
+
+	// Remontee a la page. `report` n'est pas lu comme dependance : seul l'etat
+	// derive declenche l'effet, donc pas de boucle avec le parent.
+	$effect(() => {
+		const etat = { vide, complet, modifie };
+		if (editable) report?.(etat);
 	});
 
 	function choose(next: PickSide) {
@@ -113,15 +132,27 @@
 		}
 	}
 
+	function chooseSplit(valeur: number) {
+		if (!editable) return;
+		nul = false;
+		// Rejouer le split deja retenu le retire : c'est le seul moyen de revenir
+		// a une carte vierge sans recharger la page.
+		margin = margin === valeur && !nul ? null : valeur;
+	}
+
 	function chooseNul() {
 		if (!editable) return;
-		nul = true;
-		side = null;
+		nul = !nul;
+		if (nul) {
+			side = null;
+			margin = null;
+		}
 	}
 
 	/**
-	 * Bascule de mode. Passer au mode ecart reprend ce que le score saisi disait
-	 * deja — l'inverse est impossible, un ecart ne contient aucun score.
+	 * Bascule de mode. Passer au mode split reprend ce que le score saisi disait
+	 * deja, a condition que l'ecart corresponde a un split jouable — l'inverse
+	 * est impossible, un split ne contient aucun score.
 	 */
 	function switchMode(next: PickMode) {
 		if (!editable || mode === next) return;
@@ -129,7 +160,7 @@
 			if (derivedDiff === 0) {
 				nul = true;
 				side = null;
-			} else {
+			} else if ((SPLIT_CHOICES as readonly number[]).includes(Math.abs(derivedDiff))) {
 				margin = Math.abs(derivedDiff);
 			}
 		}
@@ -147,7 +178,7 @@
 	);
 </script>
 
-<div class="game" class:game--locked={!editable}>
+<div class="game" class:game--locked={!editable} class:game--error={!!error}>
 	<div class="game__head">
 		<span>
 			<LocalTime value={game.kickoffUtc} />
@@ -174,190 +205,174 @@
 		</span>
 	</div>
 
-	<form
-		method="POST"
-		action="/pronostics?/pronostic"
-		use:enhance={() => {
-			saving = true;
-			return async ({ update }) => {
-				await update({ reset: false });
-				saving = false;
-				justSaved = true;
-				setTimeout(() => (justSaved = false), 2500);
-			};
-		}}
-	>
-		<input type="hidden" name="gameId" value={game.id} />
-		<input type="hidden" name="mode" value={mode} />
-		<input type="hidden" name="pickSide" value={mode === 'margin' && nul ? '' : (side ?? '')} />
+	{#if editable}
+		<!-- Champs de la grille : c'est le formulaire unique de la page qui les
+		     envoie. Le nom porte l'identifiant du match, seul moyen de recoller
+		     chaque valeur a sa carte cote serveur. -->
+		<input type="hidden" name="jeu" value={game.id} />
+		<input type="hidden" name="mode:{game.id}" value={mode} />
+		<input type="hidden" name="side:{game.id}" value={mode === 'margin' && nul ? '' : (side ?? '')} />
+		<input type="hidden" name="modifie:{game.id}" value={modifie ? '1' : ''} />
 		{#if mode === 'margin'}
-			<input type="hidden" name="marginPred" value={nul ? 0 : (margin ?? '')} />
+			<input type="hidden" name="margin:{game.id}" value={nul ? 0 : (margin ?? '')} />
 		{/if}
 
-		{#if editable}
-			<div class="modes" role="group" aria-label="Mode de saisie">
-				<button
-					type="button"
-					class="tab"
-					class:tab--active={mode === 'margin'}
-					aria-pressed={mode === 'margin'}
-					onclick={() => switchMode('margin')}
-				>
-					Vainqueur + ecart
-				</button>
-				<button
-					type="button"
-					class="tab"
-					class:tab--active={mode === 'score'}
-					aria-pressed={mode === 'score'}
-					onclick={() => switchMode('score')}
-				>
-					Score
-				</button>
-			</div>
-		{/if}
-
-		<div class="teams">
+		<div class="modes" role="group" aria-label="Mode de saisie">
 			<button
 				type="button"
-				class="team"
-				class:team--selected={side === 'away'}
-				class:team--winner={realWinner === 'away'}
-				disabled={!editable}
-				onclick={() => choose('away')}
+				class="tab"
+				class:tab--active={mode === 'margin'}
+				aria-pressed={mode === 'margin'}
+				onclick={() => switchMode('margin')}
 			>
-				{#if game.awayLogo}
-					<img class="team__logo" src={game.awayLogo} alt="" loading="lazy" />
-				{/if}
-				<span class="team__abbr">{game.awayAbbr}</span>
-				<span class="team__stake">
-					{game.basePointsAway !== null ? `${game.basePointsAway} pts` : '—'}
-				</span>
+				Vainqueur + split
 			</button>
-
-			<div class="vs">
-				<span>@</span>
-				{#if finished}
-					<strong class="small">{game.scoreAway}–{game.scoreHome}</strong>
-				{/if}
-			</div>
-
 			<button
 				type="button"
-				class="team"
-				class:team--selected={side === 'home'}
-				class:team--winner={realWinner === 'home'}
-				disabled={!editable}
-				onclick={() => choose('home')}
+				class="tab"
+				class:tab--active={mode === 'score'}
+				aria-pressed={mode === 'score'}
+				onclick={() => switchMode('score')}
 			>
-				{#if game.homeLogo}
-					<img class="team__logo" src={game.homeLogo} alt="" loading="lazy" />
-				{/if}
-				<span class="team__abbr">{game.homeAbbr}</span>
-				<span class="team__stake">
-					{game.basePointsHome !== null ? `${game.basePointsHome} pts` : '—'}
-				</span>
+				Score
 			</button>
 		</div>
+	{/if}
 
-		{#if editable && mode === 'margin'}
-			<div class="pick-margin">
+	<div class="teams">
+		<button
+			type="button"
+			class="team"
+			class:team--selected={side === 'away'}
+			class:team--winner={realWinner === 'away'}
+			disabled={!editable}
+			onclick={() => choose('away')}
+		>
+			{#if game.awayLogo}
+				<img class="team__logo" src={game.awayLogo} alt="" loading="lazy" />
+			{/if}
+			<span class="team__abbr">{game.awayAbbr}</span>
+			<span class="team__stake">
+				{game.basePointsAway !== null ? `${game.basePointsAway} pts` : '—'}
+			</span>
+		</button>
+
+		<div class="vs">
+			<span>@</span>
+			{#if finished}
+				<strong class="small">{game.scoreAway}–{game.scoreHome}</strong>
+			{/if}
+		</div>
+
+		<button
+			type="button"
+			class="team"
+			class:team--selected={side === 'home'}
+			class:team--winner={realWinner === 'home'}
+			disabled={!editable}
+			onclick={() => choose('home')}
+		>
+			{#if game.homeLogo}
+				<img class="team__logo" src={game.homeLogo} alt="" loading="lazy" />
+			{/if}
+			<span class="team__abbr">{game.homeAbbr}</span>
+			<span class="team__stake">
+				{game.basePointsHome !== null ? `${game.basePointsHome} pts` : '—'}
+			</span>
+		</button>
+	</div>
+
+	{#if editable && mode === 'margin'}
+		<div class="splits" role="group" aria-label="Split predit">
+			<button
+				type="button"
+				class="split split--nul"
+				class:split--active={nul}
+				aria-pressed={nul}
+				onclick={chooseNul}
+			>
+				Match nul
+			</button>
+			{#each SPLIT_CHOICES as valeur (valeur)}
 				<button
 					type="button"
-					class="tab"
-					class:tab--active={nul}
-					aria-pressed={nul}
-					onclick={chooseNul}
+					class="split"
+					class:split--active={!nul && margin === valeur}
+					aria-pressed={!nul && margin === valeur}
+					onclick={() => chooseSplit(valeur)}
 				>
-					Match nul
+					+{valeur}
 				</button>
-				<label class="tiny muted" for="margin-{game.id}">ecart de</label>
-				<input
-					id="margin-{game.id}"
-					type="number"
-					min="1"
-					max="99"
-					inputmode="numeric"
-					placeholder="—"
-					disabled={nul}
-					bind:value={margin}
-				/>
-				<span class="tiny muted">points</span>
-			</div>
-		{:else if editable}
-			<div class="score-inputs">
-				<input
-					type="number"
-					name="scoreAwayPred"
-					min="0"
-					max="99"
-					required
-					inputmode="numeric"
-					placeholder="—"
-					aria-label="Score predit {game.awayAbbr}"
-					bind:value={awayScore}
-				/>
-				<span class="muted small">score</span>
-				<input
-					type="number"
-					name="scoreHomePred"
-					min="0"
-					max="99"
-					required
-					inputmode="numeric"
-					placeholder="—"
-					aria-label="Score predit {game.homeAbbr}"
-					bind:value={homeScore}
-				/>
-			</div>
+			{/each}
+		</div>
+		{#if splitHorsListe}
+			<p class="tiny" style="margin:0.4rem 0 0;color:var(--warn)">
+				Ton pronostic enregistre est un ecart de {margin} points, qui n'est plus proposé. Il reste
+				valable tel quel ; choisis un split ci-dessus pour le remplacer.
+			</p>
 		{/if}
+	{:else if editable}
+		<div class="score-inputs">
+			<input
+				type="number"
+				name="away:{game.id}"
+				min="0"
+				max="99"
+				inputmode="numeric"
+				placeholder="—"
+				aria-label="Score predit {game.awayAbbr}"
+				bind:value={awayScore}
+			/>
+			<span class="muted small">score</span>
+			<input
+				type="number"
+				name="home:{game.id}"
+				min="0"
+				max="99"
+				inputmode="numeric"
+				placeholder="—"
+				aria-label="Score predit {game.homeAbbr}"
+				bind:value={homeScore}
+			/>
+		</div>
+	{/if}
 
-		{#if editable}
-			<div class="between" style="margin-top:0.6rem">
-				<span class="tiny muted">
-					{#if mode === 'score' && derivedDiff === 0 && side === null}
-						Nul predit : choisis aussi l'equipe a crediter si le match ne finit pas nul.
-					{:else if previewDiff !== null}
-						Soit <strong>{marginLabel(previewDiff, game.homeAbbr, game.awayAbbr)}</strong>
-						{#if mode === 'margin' && nul}
-							— ×1,5 si le match finit nul, 0 sinon : aucune equipe n'est designee.
-						{:else if mode === 'margin'}
-							— ×1,5 si l'ecart est exact, jamais de ×2.
-						{:else}
-							— ×1,5 si l'ecart est exact, ×2 si le score l'est.
-						{/if}
-						{#if game.pick && !dirty}· enregistre, modifiable jusqu'au kickoff{/if}
-					{:else if mode === 'margin'}
-						Choisis une equipe et un ecart, ou « Match nul ».
-					{:else}
-						Saisis les deux scores : le vainqueur et l'ecart s'en deduisent.
-					{/if}
-				</span>
-				<button
-					class="btn btn--primary btn--sm"
-					type="submit"
-					disabled={saving || !complete || (!dirty && !!game.pick)}
-				>
-					{saving ? '…' : justSaved || saved ? 'Enregistre ✓' : 'Enregistrer'}
-				</button>
-			</div>
-		{:else if game.pick}
-			<div class="between" style="margin-top:0.6rem">
-				<span class="tiny muted">
-					Ton prono : <strong>{pickLabel(game.pick, game.homeAbbr, game.awayAbbr)}</strong>
-				</span>
-				{#if game.points !== null}
-					<span class="badge" class:badge--open={game.points > 0}>{game.points} pts</span>
+	{#if editable}
+		<div class="tiny muted" style="margin-top:0.6rem">
+			{#if mode === 'score' && derivedDiff === 0 && side === null}
+				Nul predit : choisis aussi l'equipe a crediter si le match ne finit pas nul.
+			{:else if previewDiff !== null}
+				Soit <strong>{marginLabel(previewDiff, game.homeAbbr, game.awayAbbr)}</strong>
+				{#if mode === 'margin' && nul}
+					— ×1,5 si le match finit nul, 0 sinon : aucune equipe n'est designee.
+				{:else if mode === 'margin'}
+					— ×1,5 si le split est exact, ×1,375 s'il est rate d'un point, jamais de ×2.
+				{:else}
+					— ×1,5 si l'ecart est exact, ×2 si le score l'est. Pas de bonus de proximite.
 				{/if}
-			</div>
-		{:else}
-			<div class="tiny muted" style="margin-top:0.6rem">
-				{game.neutralized ? 'Match neutralise : 0 point pour tout le monde.' : 'Aucun pronostic — 0 point.'}
-			</div>
-		{/if}
+				{#if game.pick && !modifie}· enregistre, modifiable jusqu'au kickoff{/if}
+			{:else if mode === 'margin'}
+				Choisis une equipe et un split, ou « Match nul ».
+			{:else}
+				Saisis les deux scores : le vainqueur et l'ecart s'en deduisent.
+			{/if}
+		</div>
+	{:else if game.pick}
+		<div class="between" style="margin-top:0.6rem">
+			<span class="tiny muted">
+				Ton prono : <strong>{pickLabel(game.pick, game.homeAbbr, game.awayAbbr)}</strong>
+			</span>
+			{#if game.points !== null}
+				<span class="badge" class:badge--open={game.points > 0}>{game.points} pts</span>
+			{/if}
+		</div>
+	{:else}
+		<div class="tiny muted" style="margin-top:0.6rem">
+			{game.neutralized ? 'Match neutralise : 0 point pour tout le monde.' : 'Aucun pronostic — 0 point.'}
+		</div>
+	{/if}
 
-		{#if error}
-			<div class="alert alert--error small" style="margin:0.6rem 0 0">{error}</div>
-		{/if}
-	</form>
+	{#if error}
+		<div class="alert alert--error small" style="margin:0.6rem 0 0">{error}</div>
+	{/if}
 </div>

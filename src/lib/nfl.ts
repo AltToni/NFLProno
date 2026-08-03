@@ -45,8 +45,17 @@ export const GAME_STATUS_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export const PICK_MODE_LABEL: Record<PickMode, string> = {
-	margin: 'Vainqueur + ecart',
+	margin: 'Vainqueur + split',
 	score: 'Score'
+};
+
+/** Libelle du bonus obtenu, partage par la page match et le profil joueur. */
+export const BONUS_LABEL: Record<string, string> = {
+	none: '',
+	margin: 'split exact',
+	near: 'split a un point',
+	exact: 'score exact',
+	draw: 'match nul'
 };
 
 /** Ce qu'un pronostic doit contenir pour etre affichable, dans les deux modes. */

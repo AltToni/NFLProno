@@ -58,21 +58,23 @@ export const FIXTURES: Fixture[] = [
 		id: 'TEST-SIM-1',
 		home: { abbr: 'ARD', name: "Aurochs d'Ardenne" },
 		away: { abbr: 'BRB', name: 'Bisons du Brabant' },
-		// Gros favori : ~80 % implicite, donc peu de points a la cle.
+		// Gros favori : ~80 % implicite, donc peu de points a la cle. Ecart final
+		// de 15 points, soit un split jouable exactement : exerce le bonus plein.
 		moneylineHome: -400,
 		moneylineAway: 300,
 		quarts: [
 			[7, 0],
 			[14, 3],
 			[20, 13],
-			[27, 13]
+			[28, 13]
 		]
 	},
 	{
 		id: 'TEST-SIM-2',
 		home: { abbr: 'CON', name: 'Corbeaux du Condroz' },
 		away: { abbr: 'FAG', name: 'Faucons de Gaume' },
-		// La surprise : le favori mene jusqu'au dernier quart et perd.
+		// La surprise : le favori mene jusqu'au dernier quart et perd. Ecart final
+		// de 7 points, a un point du split +6 : exerce le bonus de proximite.
 		moneylineHome: -200,
 		moneylineAway: 170,
 		quarts: [
