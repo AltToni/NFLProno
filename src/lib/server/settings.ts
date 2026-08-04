@@ -200,6 +200,62 @@ export function currentSeason(): number {
 	return getSetting('season.year');
 }
 
+// ---------------------------------------------------------------------------
+// Reglages textuels
+// ---------------------------------------------------------------------------
+
+/**
+ * `SETTING_DEFS` ne decrit que des nombres — bornes, pas, curseurs de l'admin.
+ * Le nom de la ligue n'entre pas dans ce moule. Il vit dans la meme table
+ * `settings` (dont la colonne `value` est deja du texte, donc aucun changement
+ * de schema), avec son propre acces et son propre cache.
+ */
+export const TEXT_SETTING_DEFS = {
+	'league.name': { value: 'Pronos NFL', label: 'Nom de la ligue', max: 40 }
+} as const;
+
+export type TextSettingKey = keyof typeof TEXT_SETTING_DEFS;
+
+let textCache: Map<string, string> | null = null;
+
+export function invalidateTextSettings(): void {
+	textCache = null;
+}
+
+export function getTextSetting(key: TextSettingKey): string {
+	if (!textCache) {
+		const map = new Map<string, string>();
+		for (const k of Object.keys(TEXT_SETTING_DEFS) as TextSettingKey[]) {
+			map.set(k, TEXT_SETTING_DEFS[k].value);
+		}
+		for (const row of db.select().from(settings).all()) {
+			if (estReglageTexte(row.key) && row.value.trim() !== '') map.set(row.key, row.value);
+		}
+		textCache = map;
+	}
+	return textCache.get(key) ?? TEXT_SETTING_DEFS[key].value;
+}
+
+function estReglageTexte(key: string): key is TextSettingKey {
+	return Object.prototype.hasOwnProperty.call(TEXT_SETTING_DEFS, key);
+}
+
+export function setTextSetting(key: TextSettingKey, value: string): void {
+	const def = TEXT_SETTING_DEFS[key];
+	if (!def) throw new Error(`Reglage inconnu : ${key}`);
+	// Vide = retour au defaut plutot qu'une ligue sans nom dans l'entete.
+	const propre = value.trim().slice(0, def.max) || def.value;
+	db.insert(settings)
+		.values({ key, value: propre, updatedAt: now() })
+		.onConflictDoUpdate({ target: settings.key, set: { value: propre, updatedAt: now() } })
+		.run();
+	invalidateTextSettings();
+}
+
+export function leagueName(): string {
+	return getTextSetting('league.name');
+}
+
 export function listSettings() {
 	const values = load();
 	return (Object.keys(SETTING_DEFS) as SettingKey[]).map((key) => ({

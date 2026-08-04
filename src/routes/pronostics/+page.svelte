@@ -112,25 +112,27 @@
 
 	<div class="between wrap" style="margin-bottom:0.85rem">
 		<div>
-			<h1 style="margin-bottom:0.2rem">
+			<h1 style="margin-bottom:0.25rem">
 				{data.week.label}
 				{#if isTestWeek(testKind)}<span class="badge badge--test">TEST</span>{/if}
 			</h1>
 			<p class="small muted" style="margin:0">
-				{done}/{playable} pronostiques
+				<span class="chip" class:chip--positive={done === playable && playable > 0}>
+					{done}/{playable} pronostiques
+				</span>
 				{#if data.week.status === 'cloturee'}
-					· semaine cloturee · <strong>{weekPoints} pts</strong>
+					<span class="chip">semaine cloturee · <strong class="pts">{weekPoints} pts</strong></span>
 				{:else if weekPoints > 0}
-					· <strong>{weekPoints} pts</strong> acquis
+					<span class="chip"><strong class="pts">{weekPoints} pts</strong> acquis</span>
 				{/if}
 				{#if data.multiplier !== 1}
-					· multiplicateur ×{data.multiplier}
+					<span class="chip">multiplicateur ×{data.multiplier}</span>
 				{/if}
-				· <a href="/regles" style="text-decoration:underline">comment sont calcules les points ?</a>
+				<a class="chip" href="/regles">comment sont calcules les points ?</a>
 			</p>
 		</div>
 		{#if nextKickoff}
-			<div class="card" style="margin:0;padding:0.5rem 0.8rem">
+			<div class="prochain">
 				<div class="tiny muted">prochain kickoff</div>
 				<strong><Countdown target={nextKickoff} /></strong>
 			</div>
@@ -218,3 +220,21 @@
 		{/if}
 	</form>
 {/if}
+
+<style>
+	/* Les chips de l'entete forment une ligne qui se replie sur telephone. */
+	p .chip {
+		margin: 0.15rem 0.15rem 0 0;
+	}
+
+	.prochain {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.55rem 0.9rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		font-variant-numeric: tabular-nums;
+	}
+</style>

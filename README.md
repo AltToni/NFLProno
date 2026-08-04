@@ -298,7 +298,8 @@ src/
     scoring.ts            barème (pur, teste)
     nfl.ts, time.ts       libelles, formats belges, fuseaux
     types.ts              types partages serveur / composants
-    components/           GameCard, RankChart, Countdown, LocalTime
+    components/           GameCard, MatchRow, Podium, ProgressRing, Avatar,
+                          Icon, RankChart, Countdown, LocalTime
     server/
       db/                 schema Drizzle + migrations idempotentes
       espn.ts             client ESPN (retries, double source de cotes)
@@ -308,7 +309,9 @@ src/
       picks.ts            lecture/ecriture des pronostics, verrouillage
       auth.ts, mail.ts    invitations, magic links, sessions, SMTP
       cron.ts, backup.ts  ordonnanceur et sauvegardes
+      home.ts             donnees de l'accueil (activite, resultats, recap)
   routes/
+    +page.svelte          accueil : hero, semaine en cours, recap, activite
     connexion/            code d'invitation + magic link
     pronostics/           grille de la semaine
     match/[id]/           pronostics du groupe + points
@@ -317,6 +320,51 @@ src/
     regles/               explication du bareme, exemple chiffre
     admin/                invitations, taches, reglages, corrections
 ```
+
+### Systeme de design
+
+Tout part de `src/app.css`, ou vivent les tokens. Trois couleurs portent le
+sens, et une seule chacune :
+
+| Token | Role |
+|---|---|
+| `--accent` (bleu `#2b52ec`) | **action** : boutons, onglet courant, equipe choisie |
+| `--positive` (vert `#5fdf29`) | **points et reussite** — jamais un bouton |
+| `--danger` (rouge) | erreur, mauvais pronostic |
+
+Le reste est une echelle de bleu-noir (`--bg` → `--surface-3`) : les cartes se
+detachent du fond par la clarte, pas par la bordure, qui reste a peine
+visible. Les titres utilisent `--font-display`, une grotesque condensee **si le
+systeme en a une** — aucune `@font-face`, donc aucune origine externe a
+autoriser dans la CSP, et une police absente ne change que la graisse.
+
+Les composants partages evitent de redecrire ces choix a chaque vue :
+`Avatar` (photo ou initiales sur une teinte derivee du pseudo), `Icon` (SVG
+inline, pas de police d'icones), `ProgressRing`, `MatchRow`, `Podium`.
+
+**Navigation.** Barre horizontale au-dessus de 860 px, barre basse fixe en
+dessous — l'application etant installable, la barre basse est ce qu'on attend
+d'elle sur telephone. Les deux sont construites depuis **la meme liste**
+d'entrees dans `+layout.svelte` ; seul le drapeau `mobile` decide de la
+presence dans la barre basse, limitee a cinq destinations.
+
+**Les enjeux ne quittent jamais un match.** Les points en jeu de chaque camp
+sont affiches sur la carte de la grille (`GameCard`) *et* sur la ligne compacte
+de l'accueil (`MatchRow`). C'est l'information qui rend le choix interessant :
+elle doit etre lisible avant meme d'ouvrir la grille.
+
+**Une seule ligue.** « Ma ligue » est une carte d'information : un nom
+(reglage `league.name`, modifiable dans `/admin`) et le nombre de comptes
+actifs. Il n'y a rien a creer, rejoindre ou quitter. Le nom est un reglage
+*textuel* — `SETTING_DEFS` ne decrit que des nombres, d'ou l'API
+`getTextSetting` / `setTextSetting` a cote, qui ecrit dans la meme table
+`settings` sans changement de schema.
+
+**Activite recente.** Le flux annonce qu'un joueur a pronostique un match,
+jamais **ce qu'il a joue** : le devoiler avant le coup d'envoi distribuerait
+les reponses. Le resultat (✓ / ✗) n'apparait qu'une fois le match termine et
+les points calcules — la meme regle que `gameDetail`, qui ne revele les
+pronostics du groupe qu'apres le kickoff.
 
 ### Choix notables
 

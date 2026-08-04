@@ -22,7 +22,8 @@ const config = {
 				'default-src': ['self'],
 				'script-src': ['self'],
 				'style-src': ['self'],
-				// Les 52 attributs `style="..."` du projet, plus le
+				// Les attributs `style="..."` du projet (anneau de progression,
+				// teinte d'avatar, ajustements ponctuels), plus le
 				// `<div style="display: contents">` de app.html. Un attribut de
 				// style ne peut pas executer de script : c'est la concession la
 				// moins chere face a une refonte de toutes les vues.

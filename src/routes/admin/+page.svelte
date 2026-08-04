@@ -438,6 +438,27 @@
 
 <!-- ------------------------------------------------------------------ -->
 <div class="card">
+	<h2>Ma ligue</h2>
+	<p class="small muted" style="margin-top:-0.3rem">
+		Le nom affiche sur l'accueil. Le jeu n'a qu'une ligue : tous les comptes actifs en sont membres,
+		il n'y a rien a creer ni a rejoindre.
+	</p>
+	<form method="POST" action="?/ligue" use:enhance class="row wrap">
+		<label class="small" for="league-name">Nom</label>
+		<input
+			id="league-name"
+			type="text"
+			name="name"
+			value={data.leagueName}
+			maxlength="40"
+			style="width:auto;min-width:14rem;text-align:left"
+		/>
+		<button class="btn btn--sm" type="submit">Renommer</button>
+	</form>
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<div class="card">
 	<h2>Reglages du bareme</h2>
 	{#if seasonStarted}
 		<div class="alert alert--warn small">

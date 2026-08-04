@@ -57,6 +57,27 @@ export interface EtatCarte {
 	modifie: boolean;
 }
 
+/**
+ * Icones disponibles dans `Icon.svelte`. Le type vit ici plutot que dans le
+ * composant : un `<script lang="ts">` d'instance n'exporte pas ses types, et
+ * la navigation a besoin de nommer une icone dans sa table d'entrees.
+ */
+export type IconName =
+	| 'accueil'
+	| 'ballon'
+	| 'trophee'
+	| 'stats'
+	| 'reglages'
+	| 'bouclier'
+	| 'couronne'
+	| 'check'
+	| 'croix'
+	| 'calendrier'
+	| 'chevron-droite'
+	| 'chevron-gauche'
+	| 'livre'
+	| 'sortie';
+
 export interface StandingRow {
 	userId: number;
 	pseudo: string;
