@@ -5,7 +5,14 @@ import { db } from '$lib/server/db';
 import { invites, users } from '$lib/server/db/schema';
 import { requireAdmin } from '$lib/server/guards';
 import { createInvite } from '$lib/server/auth';
-import { listSettings, setSetting, currentSeason, type SettingKey } from '$lib/server/settings';
+import {
+	listSettings,
+	setSetting,
+	currentSeason,
+	leagueName,
+	setTextSetting,
+	type SettingKey
+} from '$lib/server/settings';
 import { recentRuns, runTask, taskStatuses, closeFinishedWeeks, type TaskName } from '$lib/server/cron';
 import { runSnapshot } from '$lib/server/sync';
 import { recomputeSeason } from '$lib/server/results';
@@ -40,6 +47,7 @@ export const load: PageServerLoad = async () => {
 			.all(),
 		players: db.select().from(users).orderBy(users.pseudo).all(),
 		settings: listSettings(),
+		leagueName: leagueName(),
 		tasks: taskStatuses(),
 		runs: recentRuns(20),
 		weeks: listWeeks(),
@@ -127,6 +135,14 @@ export const actions: Actions = {
 			return fail(400, { error: (err as Error).message });
 		}
 		return { ok: `Reglage ${key} mis a jour. Pense a relancer le recalcul si la saison a commence.` };
+	},
+
+	/** Nom affiche par la carte « Ma ligue » de l'accueil. */
+	ligue: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const form = await request.formData();
+		setTextSetting('league.name', String(form.get('name') ?? ''));
+		return { ok: `Ligue renommee en « ${leagueName()} ».` };
 	},
 
 	snapshot: async ({ request, locals }) => {

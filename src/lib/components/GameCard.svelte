@@ -178,7 +178,13 @@
 	);
 </script>
 
-<div class="game" class:game--locked={!editable} class:game--error={!!error}>
+<!-- L'ancre permet a l'accueil de pointer une carte precise de la grille. -->
+<div
+	id="match-{game.id}"
+	class="game"
+	class:game--locked={!editable}
+	class:game--error={!!error}
+>
 	<div class="game__head">
 		<span>
 			<LocalTime value={game.kickoffUtc} />
