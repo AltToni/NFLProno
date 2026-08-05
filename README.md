@@ -103,25 +103,18 @@ ml > 0 :  p_raw = 100 / (ml + 100)
 
 puis de-vig par normalisation : `p = p_raw / (p_raw_home + p_raw_away)`.
 
-### Deux modes de saisie
+### Ce qu'on pronostique
 
-Pour chaque match, le joueur choisit **comment** il pronostique. La bascule est
-sur la carte du match, et le mode retenu est memorise avec le pronostic : deux
-matchs de la meme semaine peuvent etre saisis differemment. **Le mode par defaut
-est « vainqueur + ecart ».**
+Pour chaque match, deux choses : **l'equipe gagnante** et **l'ecart de points**.
+L'ecart est un entier libre de 1 a 60 — il n'y a pas de liste imposee. Ou
+« Match nul », qui ne designe alors aucune equipe.
 
-| Mode | Ce qu'on saisit | Bonus accessibles |
-|---|---|---|
-| **A — Vainqueur + ecart** (defaut) | une equipe et un ecart libre (1 a 60), ou « Match nul » (ecart 0, aucune equipe) | le **bonus de rarete**, de +25 % a +200 % selon l'ecart vise, attenue si l'ecart est rate. **Jamais ×2** : aucun score n'est predit |
-| **B — Score** | les deux scores ; l'interface derive et affiche en direct le vainqueur et l'ecart | ×1,5 (ecart exact) et ×2 (score exact). **Forfaitaire** : ni bonus de rarete, ni tolerance |
-
-Les deux modes partagent le meme calcul des points de base : l'**ecart signe
-predit** est la seule grandeur qui compte, et elle vient soit de l'ecart
-annonce, soit de la difference des scores.
+Designer la bonne equipe suffit a gagner les **points de base** du match.
+L'ecart, lui, decide du **bonus**.
 
 #### Le bonus de rarete
 
-En mode A, **plus l'ecart que tu vises est improbable, plus le bonus est gros.**
+**Plus l'ecart que tu vises est improbable, plus le bonus est gros.**
 
 ```
 bonus_exact(m) = clamp(k / f(m), 25 %, 200 %)
@@ -195,7 +188,7 @@ le resultat, et c'est teste comme tel (`scoring.test.ts`).
 **Le nul predit** suit exactement la meme mecanique, avec `f(0)`. Le nul est
 l'issue la plus rare du jeu — 10 matchs sur 2895, soit 0,35 % — donc son bonus
 est au plafond. Comme il ne designe aucune equipe, son enjeu est la moyenne des
-deux baremes (voir interpretation 3 ci-dessous) : c'est le plus gros gain
+deux baremes (voir interpretation 2 ci-dessous) : c'est le plus gros gain
 unitaire du jeu, et de loin le plus difficile a decrocher.
 
 #### Les reglages
@@ -217,13 +210,10 @@ recalibrer casse la propriete de moyenne a 100 % — le script la recalcule.
 
 #### La carte de saisie
 
-Une carte de `/pronostics`, ici en mode A avec un ecart de 6 points annonce sur
-KC :
+Une carte de `/pronostics`, ici avec un ecart de 6 points annonce sur KC :
 
 ```
  19:00                                        dans 2 j 4 h · details
-
-   [ Vainqueur + ecart ]   [        Score       ]   <- bascule par match
 
      LV  125 pts      @      KC  31 pts             <- choix en bleu
 
@@ -242,13 +232,6 @@ Le pourcentage a cote du champ **se met a jour a chaque frappe** : c'est lui qui
 transforme le choix d'un ecart en arbitrage plutot qu'en devinette. Les six
 raccourcis sont les ecarts les plus frequents, proposes pour eviter de taper les
 cas courants — ce ne sont pas des choix imposes.
-
-En mode B, le champ d'ecart cede la place aux deux cases de score, et la ligne
-d'apercu suit la frappe : `Soit KC +7 — ×1,5 si l'ecart est exact, ×2 si le
-score l'est. Pas de bonus de proximite en mode score`. Le vainqueur y est
-**derive** du score. Un score nul (`20–20`) est le seul cas ou le joueur designe
-encore une equipe a la main : elle decide des points si le match ne finit
-finalement pas nul.
 
 Une fois le match termine, la carte, la page match et l'historique du joueur
 affichent le **detail du calcul** — `31 × (1 + 54 %)` — relu depuis les points
@@ -284,13 +267,11 @@ base  = clamp(round(25 / p), 25, 250)
 | Resultat | Points |
 |---|---|
 | Vainqueur correct | `base` |
-| + ecart annonce, **mode A** | `base × (1 + bonus_rarete)` — de `base × 1,25` a `base × 3` |
-| + ecart exact, **mode B** | `base × 1,5` |
-| + score exact (**mode B uniquement**) | `base × 2` (remplace le bonus d'ecart) |
+| + bonus de rarete, selon l'ecart annonce | `base × (1 + bonus)` — de `base × 1,25` a `base × 3` |
 | Vainqueur incorrect | 0 |
 | Match nul | `base × 0,5` de l'equipe choisie |
-| Match nul predit (ecart 0), **mode A** | `base × 3` — le nul est l'issue la plus rare |
-| Nul predit en mode A, match avec vainqueur | 0 : aucune equipe a crediter |
+| Match nul predit (ecart 0) | `base × 3` — le nul est l'issue la plus rare |
+| Nul predit, match avec vainqueur | 0 : aucune equipe a crediter |
 | Match reporte / annule | 0 pour tous, match neutralise |
 | Cotes absentes au snapshot | `p = 0,5` des deux cotes, signale dans l'admin |
 | Pas de pronostic | 0 |
@@ -301,55 +282,40 @@ Championships ×2,5, Super Bowl ×3.
 Toutes ces constantes sont en base (`settings`) et editables dans `/admin`.
 
 **Exemple chiffre** sur `LV @ KC` — 31 pts sur KC, 125 pts sur LV, resultat final
-**KC 24 – LV 20**, soit un ecart reel de **4 points**. Les scores predits se
-lisent dans l'ordre de l'interface, **visiteurs–locaux**, soit `LV–KC` :
+**KC 24 – LV 20**, soit un ecart reel de **4 points** :
 
-| Pronostic saisi | Mode | Points |
-|---|---|---|
-| `KC +4` | A | **56** — pile dessus, sur un ecart peu frequent : `round(31 × 1,80)` |
-| `KC +5` | A | **51** — rate d'un point, mais +5 est plus rare : `round(31 × 1,64)` |
-| `KC +3` | A | **37** — rate d'un point lui aussi, mais +3 est l'ecart le plus banal du jeu |
-| `KC +6` | A | 39 — rate de deux points, sur un ecart moyennement frequent |
-| `KC +12` | A | 31 — rate de huit : le bonus est eteint, la base reste |
-| `LV +3` | A | 0 — mauvais vainqueur |
-| `Match nul` | A | 0 — le match a un vainqueur, aucune equipe n'etait designee |
-| `20–24` | B | 62 — score exact : `31 × 2` |
-| `23–27` | B | 47 — ecart exact (KC +4), score rate : `31 × 1,5` |
-| `22–25` | B | 31 — ecart de 3 contre 4 reel : **le mode B n'a aucune tolerance** |
-| `10–30` | B | 31 — bon vainqueur, rien de plus |
+| Pronostic saisi | Points |
+|---|---|
+| `KC +4` | **56** — pile dessus, sur un ecart peu frequent : `round(31 × 1,80)` |
+| `KC +5` | **51** — rate d'un point, mais +5 est plus rare : `round(31 × 1,64)` |
+| `KC +3` | **37** — rate d'un point lui aussi, mais +3 est l'ecart le plus banal du jeu |
+| `KC +6` | 39 — rate de deux points, sur un ecart moyennement frequent |
+| `KC +12` | 31 — rate de huit : le bonus est eteint, la base reste |
+| `LV +3` | 0 — mauvais vainqueur |
+| `Match nul` | 0 — le match a un vainqueur, aucune equipe n'etait designee |
+| `LV +4` (si LV avait gagne de 4) | 225 — le meme ecart sur l'outsider : `round(125 × 1,80)` |
 
 Les trois premieres lignes disent tout du bonus de rarete : `+5` et `+3` ratent
 l'ecart du **meme point**, et pourtant `+5` rapporte 14 points de plus, parce
 que c'est un resultat trois fois moins courant.
 
-Si ce meme match avait fini **20 – 20**, un `Match nul` (mode A) aurait rapporte
+Si ce meme match avait fini **20 – 20**, un `Match nul` aurait rapporte
 `round(78 × 3)` = **234 pts** — 78 etant la moyenne des deux baremes (voir
-interpretation 3 ci-dessous), et 3 le facteur d'un bonus au plafond. Un `KC +3`
+interpretation 2 ci-dessous), et 3 le facteur d'un bonus au plafond. Un `KC +3`
 aurait touche `round(31 × 0,5)` = 16 pts au titre du match nul : un match nul
 reel n'est jamais traite comme un ecart « rate de peu ».
 
-**Trois points d'interpretation de la spec**, à trancher avant le coup d'envoi :
+**Deux points d'interpretation de la spec**, à trancher avant le coup d'envoi :
 
-1. *Match nul avec score exact predit.* La spec prevoit « points de base +
-   bonus d'ecart » pour qui predit un nul. L'implementation applique la regle
-   generale du §2.3 : si le score du nul est exact au point pres, c'est le bonus
-   de score exact (×2) qui s'applique, sinon le bonus d'ecart (×1,5). Pour
-   coller au texte à la lettre, mettre `scoring.exact_bonus_pct` = 0,5. En mode
-   A la question ne se pose pas : sans score predit, c'est le bonus de rarete
-   de `f(0)` qui s'applique, soit le plafond.
-2. *Coherence score / vainqueur.* Un pronostic dont le score donnerait la
-   victoire à l'equipe non choisie est refuse (cote client **et** serveur). Le
-   nul reste autorise quelle que soit l'equipe choisie, puisque la spec le
-   prevoit explicitement. Cote mode A, le controle serveur exige la meme
-   coherence : un ecart strictement positif designe une equipe, un ecart 0 n'en
-   designe aucune. L'ecart lui-meme est **libre** entre 1 et 60 — la liste
-   fermee de huit splits a disparu avec l'arrivee du bonus de rarete, qui donne
-   a chaque valeur son propre bareme et rend inutile de restreindre le choix.
-3. *Enjeu d'un nul predit en mode A.* « Match nul » ne choisit pas d'equipe,
-   donc aucun des deux baremes ne s'impose. Les points en jeu sont la **moyenne
-   des deux**, seule valeur neutre. Consequence assumee : si le match a
-   finalement un vainqueur, ce pronostic vaut 0, là ou un nul saisi en mode B
-   (par exemple `20–20` sur KC) rapporte encore la base de l'equipe choisie.
+1. *Coherence du pronostic.* Le controle serveur exige qu'un ecart strictement
+   positif designe une equipe, et qu'un ecart de 0 n'en designe aucune. L'ecart
+   lui-meme est **libre** entre 1 et 60 : le bonus de rarete donnant a chaque
+   valeur son propre bareme, il n'y a rien a restreindre de plus.
+2. *Enjeu d'un nul predit.* « Match nul » ne choisit pas d'equipe, donc aucun
+   des deux baremes ne s'impose. Les points en jeu sont la **moyenne des
+   deux**, seule valeur neutre. Consequence assumee : si le match a finalement
+   un vainqueur, ce pronostic vaut 0 — c'est le pari le plus rentable du jeu, et
+   le plus risque.
 
 Le module `src/lib/scoring.ts` est pur (ni base ni reseau) et couvert par
 `npm test`.
@@ -683,9 +649,9 @@ npm run dev                      # ou l'instance deja en place
    le cas echeant, les matchs sans cotes retrouvees.
 2. `/pronostics` → onglet **TEST · Rejeu 2025 S1** (en fin de liste) : saisir
    des pronostics, malgre les kickoffs passes et les scores affiches. C'est
-   l'occasion d'exercer les deux modes de saisie cote a cote — un « vainqueur +
-   ecart », un « Match nul », des scores — et de retrouver les trois formes sur
-   `/match/<id>` puis dans le profil joueur.
+   l'occasion d'exercer la saisie de bout en bout — un ecart annonce, un
+   « Match nul », un ecart volontairement rate — et de retrouver chaque
+   pronostic sur `/match/<id>` puis dans le profil joueur.
 3. `/admin` → « Recalculer tous les points ».
 4. `/classement` → onglet semaine → **TEST · Rejeu 2025 S1** : les points sont
    la. Onglet **General (saison)** : ils n'y sont pas.
@@ -813,29 +779,33 @@ Les tests couvrent les exemples chiffres de la spec (p = 0,80 → 31 pts,
 nul, les multiplicateurs de playoffs, l'idempotence, et la tolerance du client
 ESPN aux reponses incompletes.
 
-**Les deux modes de saisie sont chiffres de part en part**, avec les memes
-exemples que la section 4 (`LV @ KC`, 31 / 125 pts, KC 24 – LV 20) : ecart
-exact (47 pts), ecart rate (31), mauvais vainqueur (0), nul predit sur un vrai
-nul (117, sur la moyenne des baremes), nul predit sur un match avec vainqueur
-(0), equipe choisie sur un match nul (16), et la comparaison qui montre le
-plafond du mode A — 47 pts la ou le meme ecart saisi comme score exact en
-vaudrait 62. La coherence de saisie est testee mode par mode : ecart ≥ 1 avec
-equipe, ecart 0 sans equipe, et le refus de tout le reste.
+**Le bareme est chiffre de part en part**, avec les memes exemples que la
+section 4 (`LV @ KC`, 31 / 125 pts, KC 24 – LV 20) : ecart exact sur un
+resultat banal, ecart exact sur un resultat rare (au plafond), ecart rate de
+±1, ±2 et ±4, mauvais vainqueur (0), nul predit sur un vrai nul (234, sur la
+moyenne des baremes), nul predit sur un match avec vainqueur (0), et equipe
+choisie sur un match nul (16). Un test verifie la **calibration** — le bonus
+moyen pondere par les frequences vaut 100 % — et un autre fixe la consequence
+assumee de la formule, ou viser rare et rater d'un point paie plus que viser
+banal et tomber pile. La coherence de saisie est testee de bout en bout : ecart
+≥ 1 avec equipe, ecart 0 sans equipe, borne haute, et le refus de tout le
+reste.
 
 Deux suites sortent du pur calcul :
 
 - `db/migrate.test.ts` rejoue la montee de version sur une base **deja en v1**
   et peuplee, pas seulement sur une base vierge : c'est le chemin qu'empruntera
   la base de production. Il verifie qu'aucune semaine existante ne devient une
-  semaine de test au passage, et que la v3 — la seule migration qui **recopie**
-  des donnees, `picks` etant reconstruite — repasse chaque pronostic existant en
-  mode « score » a l'identique, index uniques et cles etrangeres compris.
+  semaine de test au passage, et que la **v4** — celle qui reconstruit `picks`
+  et `scores` — convertit chaque score predit en vainqueur + ecart sans en
+  perdre le sens (`27-20` devient `+7`, `20-20` devient un nul sans equipe),
+  index uniques et cles etrangeres compris.
 - `testing.test.ts` ouvre une base jetable et deroule le cycle d'une semaine de
-  simulation — creation, pronostics **dans les deux modes**, verrouillage a la
-  seconde du kickoff, calcul des points — puis verifie que la purge ne laisse
-  **aucune ligne orpheline** et n'entame pas la vraie semaine posee a cote. Un
-  pronostic mode A y traverse toute la chaine, de la saisie jusqu'a la ligne de
-  points, nul predit sans equipe inclus.
+  simulation — creation, saisie des pronostics, verrouillage a la seconde du
+  kickoff, calcul des points — puis verifie que la purge ne laisse **aucune
+  ligne orpheline** et n'entame pas la vraie semaine posee a cote. Un pronostic
+  y traverse toute la chaine, de la saisie jusqu'a la ligne de points, nul
+  predit sans equipe inclus.
 
 ---
 

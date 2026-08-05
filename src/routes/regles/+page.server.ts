@@ -13,8 +13,7 @@ import {
 	stakePoints,
 	type GameBase,
 	type GameOutcome,
-	type PickInput,
-	type ScoreBreakdown
+	type PickInput
 } from '$lib/scoring';
 
 /**
@@ -44,66 +43,51 @@ const RESULTAT_NUL: GameOutcome = { scoreHome: 20, scoreAway: 20 };
 interface Ligne {
 	/** Le pronostic tel que le joueur l'aurait saisi. */
 	saisi: string;
-	mode: 'A' | 'B';
 	pick: PickInput;
 	/** Pourquoi ce nombre de points — sans chiffre, il vient du calcul. */
 	pourquoi: string;
 }
 
+/**
+ * L'ordre n'est pas anodin : les deux premieres lignes ratent l'ecart du meme
+ * point et ne rapportent pas la meme chose. C'est tout le bonus de rarete en
+ * deux lignes.
+ */
 const LIGNES: Ligne[] = [
 	{
-		saisi: `${HOME_ABBR} +3`,
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'home', marginPred: 3 },
-		pourquoi: 'rate d’un point, sur l’ecart le plus banal du jeu : petit bonus, encore reduit'
+		saisi: `${HOME_ABBR} +5`,
+		pick: { pickSide: 'home', marginPred: 5 },
+		pourquoi: 'rate d’un point, sur un ecart peu courant : le bonus reste eleve'
 	},
 	{
-		saisi: `${HOME_ABBR} +5`,
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'home', marginPred: 5 },
-		pourquoi: 'rate d’un point lui aussi, mais sur un ecart bien plus rare : le bonus suit'
+		saisi: `${HOME_ABBR} +3`,
+		pick: { pickSide: 'home', marginPred: 3 },
+		pourquoi: 'rate d’un point lui aussi, mais +3 est l’ecart le plus banal du jeu'
+	},
+	{
+		saisi: `${HOME_ABBR} +4`,
+		pick: { pickSide: 'home', marginPred: 4 },
+		pourquoi: 'pile dessus : le bonus tombe plein'
+	},
+	{
+		saisi: `${HOME_ABBR} +6`,
+		pick: { pickSide: 'home', marginPred: 6 },
+		pourquoi: 'rate de deux points : la moitie du bonus'
 	},
 	{
 		saisi: `${HOME_ABBR} +12`,
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'home', marginPred: 12 },
-		pourquoi: 'bon vainqueur, ecart rate de 8 : plus rien du bonus'
+		pick: { pickSide: 'home', marginPred: 12 },
+		pourquoi: 'rate de huit : le bonus est eteint, les points de base restent'
 	},
 	{
 		saisi: `${AWAY_ABBR} +3`,
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'away', marginPred: 3 },
+		pick: { pickSide: 'away', marginPred: 3 },
 		pourquoi: 'mauvais vainqueur'
 	},
 	{
 		saisi: 'Match nul',
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: null, marginPred: 0 },
+		pick: { pickSide: null, marginPred: 0 },
 		pourquoi: 'le match a un vainqueur, et aucune equipe n’etait designee'
-	},
-	{
-		saisi: '20–24',
-		mode: 'B',
-		pick: { mode: 'score', pickSide: 'home', scoreHomePred: 24, scoreAwayPred: 20 },
-		pourquoi: 'score exact'
-	},
-	{
-		saisi: '23–27',
-		mode: 'B',
-		pick: { mode: 'score', pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 23 },
-		pourquoi: 'ecart exact, score rate'
-	},
-	{
-		saisi: '22–25',
-		mode: 'B',
-		pick: { mode: 'score', pickSide: 'home', scoreHomePred: 25, scoreAwayPred: 22 },
-		pourquoi: 'ecart de 3 contre 4 reel — le mode score n’a pas de tolerance'
-	},
-	{
-		saisi: '10–30',
-		mode: 'B',
-		pick: { mode: 'score', pickSide: 'home', scoreHomePred: 30, scoreAwayPred: 10 },
-		pourquoi: 'bon vainqueur, rien de plus'
 	}
 ];
 
@@ -111,25 +95,19 @@ const LIGNES: Ligne[] = [
 const LIGNES_NUL: Ligne[] = [
 	{
 		saisi: 'Match nul',
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: null, marginPred: 0 },
-		pourquoi: 'nul predit : l’issue la plus rare du jeu, donc le bonus le plus eleve'
+		pick: { pickSide: null, marginPred: 0 },
+		pourquoi: 'l’issue la plus rare du jeu, donc le bonus le plus eleve'
 	},
 	{
 		saisi: `${HOME_ABBR} +3`,
-		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'home', marginPred: 3 },
+		pick: { pickSide: 'home', marginPred: 3 },
 		pourquoi: 'un nul reel n’est jamais un ecart « rate de peu »'
 	}
 ];
 
 /** « 1,375 » plutot que « 1.375 », et sans zeros inutiles. */
 function nombre(valeur: number): string {
-	return valeur
-		.toFixed(3)
-		.replace(/0+$/, '')
-		.replace(/\.$/, '')
-		.replace('.', ',');
+	return valeur.toFixed(3).replace(/0+$/, '').replace(/\.$/, '').replace('.', ',');
 }
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -145,36 +123,26 @@ export const load: PageServerLoad = async ({ locals }) => {
 	 * Le facteur applique, recalcule depuis le bareme plutot que lu dans
 	 * `points / enjeu` : les points sont arrondis a l'entier, et le quotient
 	 * rendrait des facteurs qui ne sont la regle de personne.
-	 *
-	 * Le mode ecart ne peut plus se contenter du type de bonus : celui-ci est
-	 * desormais continu, chaque ecart ayant le sien. On refait donc le meme
-	 * calcul que le moteur, avec les memes primitives.
 	 */
-	const facteurDe = (ligne: Ligne, resultat: GameOutcome, detail: ScoreBreakdown): number => {
-		if (detail.bonusKind === 'draw') return cfg.drawFactor;
-		if (ligne.pick.mode === 'margin') {
-			return (
-				1 +
-				bonusEcart(
-					Math.abs(predictedDiff(ligne.pick)),
-					Math.abs(resultat.scoreHome - resultat.scoreAway),
-					cfg
-				)
-			);
-		}
-		if (detail.bonusKind === 'exact') return 1 + cfg.exactBonusPct;
-		if (detail.bonusKind === 'margin') return 1 + cfg.marginBonusPct;
-		return 1;
+	const facteurDe = (ligne: Ligne, resultat: GameOutcome, bonusKind: string): number => {
+		if (bonusKind === 'draw') return cfg.drawFactor;
+		return (
+			1 +
+			bonusEcart(
+				Math.abs(predictedDiff(ligne.pick)),
+				Math.abs(resultat.scoreHome - resultat.scoreAway),
+				cfg
+			)
+		);
 	};
 
 	const calculer = (lignes: Ligne[], resultat: GameOutcome) =>
 		lignes.map((ligne) => {
 			const enjeu = stakePoints(ligne.pick.pickSide, jeu);
 			const detail = computeScore(ligne.pick, jeu, resultat, cfg);
-			const facteur = facteurDe(ligne, resultat, detail);
+			const facteur = facteurDe(ligne, resultat, detail.bonusKind);
 			return {
 				saisi: ligne.saisi,
-				mode: ligne.mode,
 				pourquoi: ligne.pourquoi,
 				points: detail.points,
 				enjeu,
@@ -210,14 +178,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 			playoffMultipliers: cfg.playoffMultipliers
 		},
 		facteurs: {
-			ecartExact: nombre(1 + cfg.marginBonusPct),
-			scoreExact: nombre(1 + cfg.exactBonusPct),
 			nul: nombre(cfg.drawFactor),
 			pas: Math.round(cfg.bonusPas * 100),
 			plancher: Math.round(cfg.bonusPlancher * 100),
 			plafond: Math.round(cfg.bonusPlafond * 100)
 		},
-		source: { depuis: ECARTS.depuis, jusqua: ECARTS.jusqua, matchs: ECARTS.matchs, ecartMax: ECART_MAX },
+		source: {
+			depuis: ECARTS.depuis,
+			jusqua: ECARTS.jusqua,
+			matchs: ECARTS.matchs,
+			ecartMax: ECART_MAX
+		},
 		rarete,
 		tolerance,
 		exemple: {

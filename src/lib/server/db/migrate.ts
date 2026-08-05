@@ -198,6 +198,79 @@ export const MIGRATIONS: string[][] = [
 		`ALTER TABLE picks_v3 RENAME TO picks`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS picks_user_game_uidx ON picks (user_id, game_id)`,
 		`CREATE INDEX IF NOT EXISTS picks_game_idx ON picks (game_id)`
+	],
+
+	// --- v4 : un seul mode de saisie, l'ecart ---------------------------------
+	// Le pronostic sur le score disparait. Les lignes qui le portaient sont
+	// **converties**, pas supprimees : un score predit dit deja un vainqueur et
+	// un ecart, qui sont exactement ce que le mode restant demande.
+	//
+	//   27-20 sur KC  ->  KC +7
+	//   20-20 sur KC  ->  nul predit, sans equipe (un ecart de 0 n'en designe
+	//                     aucune ; le « crediter KC si finalement pas nul » du
+	//                     mode score n'a plus d'equivalent)
+	//
+	// Ce qui se perd est le score exact annonce, qui n'a plus de sens une fois
+	// le mode retire. Le vainqueur et l'ecart, eux, sont conserves — donc les
+	// points deja calcules ne bougent pas, sauf pour les nuls predits avec une
+	// equipe, qu'un recalcul ramenera a la regle du nul.
+	[
+		`UPDATE picks
+			SET margin_pred = ABS(score_home_pred - score_away_pred),
+				pick_side = CASE
+					WHEN score_home_pred = score_away_pred THEN NULL
+					ELSE pick_side
+				END
+			WHERE mode = 'score'
+			  AND score_home_pred IS NOT NULL
+			  AND score_away_pred IS NOT NULL`,
+		// Les colonnes du mode score partent avec lui : les garder vides
+		// laisserait croire qu'on peut encore les remplir.
+		`CREATE TABLE picks_v4 (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id),
+			game_id TEXT NOT NULL REFERENCES games(id),
+			pick_side TEXT,
+			margin_pred INTEGER,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`INSERT INTO picks_v4 (id, user_id, game_id, pick_side, margin_pred, created_at, updated_at)
+			SELECT id, user_id, game_id, pick_side, margin_pred, created_at, updated_at
+			FROM picks`,
+		`DROP TABLE picks`,
+		`ALTER TABLE picks_v4 RENAME TO picks`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS picks_user_game_uidx ON picks (user_id, game_id)`,
+		`CREATE INDEX IF NOT EXISTS picks_game_idx ON picks (game_id)`,
+
+		// `scores` perd `exact_score`, qui ne pouvait etre obtenu qu'en mode
+		// score. La table est entierement recalculable depuis `picks` : la
+		// reconstruire ne risque rien, et « Recalculer tous les points » la
+		// regenere de toute facon.
+		`CREATE TABLE scores_v4 (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id),
+			game_id TEXT NOT NULL REFERENCES games(id),
+			week_id INTEGER NOT NULL REFERENCES weeks(id),
+			points INTEGER NOT NULL,
+			base_points INTEGER NOT NULL,
+			bonus_points INTEGER NOT NULL DEFAULT 0,
+			bonus_kind TEXT NOT NULL DEFAULT 'none',
+			multiplier REAL NOT NULL DEFAULT 1,
+			correct INTEGER NOT NULL DEFAULT 0,
+			exact_margin INTEGER NOT NULL DEFAULT 0,
+			computed_at INTEGER NOT NULL
+		)`,
+		`INSERT INTO scores_v4 (id, user_id, game_id, week_id, points, base_points,
+				bonus_points, bonus_kind, multiplier, correct, exact_margin, computed_at)
+			SELECT id, user_id, game_id, week_id, points, base_points,
+				bonus_points, bonus_kind, multiplier, correct, exact_margin, computed_at
+			FROM scores`,
+		`DROP TABLE scores`,
+		`ALTER TABLE scores_v4 RENAME TO scores`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS scores_user_game_uidx ON scores (user_id, game_id)`,
+		`CREATE INDEX IF NOT EXISTS scores_week_idx ON scores (week_id)`,
+		`CREATE INDEX IF NOT EXISTS scores_user_idx ON scores (user_id)`
 	]
 ];
 

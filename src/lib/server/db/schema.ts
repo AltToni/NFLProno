@@ -176,26 +176,12 @@ export const picks = sqliteTable(
 		gameId: text('game_id')
 			.notNull()
 			.references(() => games.id),
-		/**
-		 * Mode de saisie choisi par le joueur pour ce match :
-		 *   'score'  -> `score_home_pred` / `score_away_pred` remplis, `margin_pred` vide ;
-		 *   'margin' -> `margin_pred` rempli, les deux scores vides.
-		 * Les pronostics d'avant la migration v3 sont tous en 'score'. Le defaut
-		 * de la colonne reste 'score' pour ne pas reinterpreter ces lignes-la ;
-		 * le mode par defaut du *jeu* est 'margin' et il est toujours ecrit
-		 * explicitement (cf. `savePick`).
-		 */
-		mode: text('mode', { enum: ['score', 'margin'] })
-			.notNull()
-			.default('score'),
-		/** cote choisi : 'home', 'away', ou null pour un nul predit (mode 'margin') */
+		/** cote choisi : 'home', 'away', ou null pour un nul predit (ecart 0) */
 		pickSide: text('pick_side', { enum: ['home', 'away'] }),
-		scoreHomePred: integer('score_home_pred'),
-		scoreAwayPred: integer('score_away_pred'),
 		/**
-		 * Split predit en mode 'margin' : une valeur de `SPLIT_CHOICES` avec une
-		 * equipe, 0 pour un nul. Colonne libre : les pronostics enregistres avant
-		 * la liste fermee portent un ecart quelconque et restent calculables.
+		 * Ecart annonce : un entier strictement positif avec une equipe, 0 pour
+		 * un nul predit. Colonne libre — le bareme donne un bonus a chaque
+		 * valeur, il n'y a donc rien a restreindre au niveau du schema.
 		 */
 		marginPred: integer('margin_pred'),
 		createdAt: integer('created_at').notNull(),
@@ -227,7 +213,6 @@ export const scores = sqliteTable(
 		bonusKind: text('bonus_kind').notNull().default('none'),
 		multiplier: real('multiplier').notNull().default(1),
 		correct: integer('correct').notNull().default(0),
-		exactScore: integer('exact_score').notNull().default(0),
 		exactMargin: integer('exact_margin').notNull().default(0),
 		computedAt: integer('computed_at').notNull()
 	},

@@ -760,35 +760,6 @@ tr.me td {
 	min-width: 3rem;
 }
 
-.score-inputs {
-	display: grid;
-	grid-template-columns: 1fr auto 1fr;
-	gap: 0.5rem;
-	align-items: center;
-	margin-top: 0.6rem;
-}
-
-/* Bascule « Vainqueur + split » / « Score », un choix par match. */
-.modes {
-	display: flex;
-	gap: 0.3rem;
-	margin-bottom: 0.8rem;
-	background: var(--bg-2);
-	padding: 0.25rem;
-	border-radius: 999px;
-	border: 1px solid var(--border);
-}
-.modes .tab {
-	flex: 1;
-	text-align: center;
-	border-color: transparent;
-	background: transparent;
-}
-.modes .tab--active {
-	background: var(--accent);
-	border-color: var(--accent);
-}
-
 /*
  * Saisie de l'ecart : « Match nul », un champ libre avec le bonus annonce a
  * cote, et des raccourcis vers les ecarts les plus courants.

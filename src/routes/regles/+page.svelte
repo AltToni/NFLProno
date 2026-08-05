@@ -9,8 +9,8 @@
 
 <h1>Comment marquer des points</h1>
 <p class="small muted" style="margin-top:-0.4rem">
-	Tous les nombres de cette page sortent du moteur de calcul, avec le bareme
-	reellement en vigueur. Si l'administrateur change une constante, l'exemple suit.
+	Tous les nombres de cette page sortent du moteur de calcul, avec le bareme reellement en vigueur.
+	Si l'administrateur change une constante, l'exemple suit.
 </p>
 
 <!-- ------------------------------------------------------------------ -->
@@ -18,8 +18,8 @@
 	<h2>1. Chaque match a son enjeu</h2>
 	<p>
 		Un match gagne d'avance ne rapporte pas autant qu'une surprise. Les points en jeu sont donc
-		calcules a partir des cotes des bookmakers : <strong>plus une equipe est donnee perdante,
-		plus la miser rapporte.</strong>
+		calcules a partir des cotes des bookmakers :
+		<strong>plus une equipe est donnee perdante, plus la miser rapporte.</strong>
 	</p>
 	<p class="small">
 		Les cotes americaines sont converties en probabilite de victoire, la marge du bookmaker est
@@ -38,47 +38,20 @@
 
 <!-- ------------------------------------------------------------------ -->
 <div class="card">
-	<h2>2. Deux facons de pronostiquer</h2>
+	<h2>2. Ce que tu pronostiques</h2>
 	<p class="small">
-		Le choix se fait <strong>match par match</strong>, avec la bascule en haut de chaque carte.
-		Deux matchs de la meme semaine peuvent etre saisis differemment.
+		Pour chaque match, deux choses : <strong>l'equipe gagnante</strong> et
+		<strong>l'ecart de points</strong> — celui que tu veux, il n'y a pas de liste imposee. Ou
+		« Match nul », qui ne designe alors aucune equipe.
 	</p>
-
-	<div class="table-wrap">
-		<table>
-			<thead>
-				<tr>
-					<th>Mode</th>
-					<th>Ce que tu saisis</th>
-					<th>Bonus atteignables</th>
-				</tr>
-			</thead>
-			<tbody>
-				<tr>
-					<td><strong>Vainqueur + ecart</strong><br /><span class="tiny muted">par defaut</span></td>
-					<td>une equipe et un ecart de ton choix, ou « Match nul »</td>
-					<td>
-						<strong class="pts">le bonus de rarete</strong><br />
-						de +{f.plancher} % a +{f.plafond} % selon l'ecart vise<br />
-						<span class="tiny muted">jamais le ×{f.scoreExact} : aucun score n'est annonce</span>
-					</td>
-				</tr>
-				<tr>
-					<td><strong>Score</strong></td>
-					<td>les deux scores ; le vainqueur et l'ecart s'en deduisent tout seuls</td>
-					<td>
-						×{f.ecartExact} ecart exact<br />
-						×{f.scoreExact} score exact<br />
-						<span class="tiny muted">forfaitaire : pas de bonus de rarete, pas de tolerance</span>
-					</td>
-				</tr>
-			</tbody>
-		</table>
-	</div>
+	<p class="small">
+		Designer la bonne equipe suffit a gagner les <strong>points de base</strong> du match. L'ecart,
+		lui, decide du <strong>bonus</strong>.
+	</p>
 
 	<h3>Le bonus de rarete</h3>
 	<p class="small">
-		En mode ecart, <strong>plus l'ecart que tu vises est improbable, plus le bonus est gros.</strong>
+		<strong>Plus l'ecart que tu vises est improbable, plus le bonus est gros.</strong>
 		Un match gagne de 3 points est le resultat le plus courant du football americain — un panier a la
 		derniere seconde — et ne vaut presque rien. Un ecart de 17, ou un match nul, sont rares : ils
 		valent cher.
@@ -167,8 +140,8 @@
 
 	<p class="small">
 		Le match se termine <strong>{ex.homeAbbr} {ex.scoreHome} – {ex.awayAbbr} {ex.scoreAway}</strong>,
-		soit un ecart de <strong>{ex.ecart} points</strong>. Voici ce que rapportent quelques
-		pronostics possibles, selon l'ecart annonce et sa rarete.
+		soit un ecart de <strong>{ex.ecart} points</strong>. Voici ce que rapportent quelques pronostics
+		possibles.
 	</p>
 
 	<div class="table-wrap">
@@ -176,7 +149,6 @@
 			<thead>
 				<tr>
 					<th>Pronostic saisi</th>
-					<th>Mode</th>
 					<th class="num">Points</th>
 					<th>Pourquoi</th>
 				</tr>
@@ -185,7 +157,6 @@
 				{#each ex.lignes as ligne (ligne.saisi)}
 					<tr>
 						<td><strong>{ligne.saisi}</strong></td>
-						<td class="tiny muted">{ligne.mode === 'A' ? 'ecart' : 'score'}</td>
 						<td class="num">
 							<strong>{ligne.points}</strong>
 							{#if ligne.facteur}
@@ -201,14 +172,9 @@
 	<p class="tiny muted">Les points sont arrondis a l'entier.</p>
 
 	<p class="small">
-		Les deux premieres lignes disent tout du bonus de rarete : <strong>{ex.homeAbbr} +3</strong> et
-		<strong>{ex.homeAbbr} +5</strong> ratent l'ecart reel du meme point, mais +5 est un resultat bien
-		plus rare que +3 — et rapporte donc nettement plus, a erreur egale.
-	</p>
-	<p class="small">
-		Les deux modes ne sont pas equivalents non plus : <strong>{ex.homeAbbr} +3</strong> et
-		<strong>22–25</strong> annoncent le meme ecart, mais le mode score n'a aucune tolerance — rate
-		d'un point, il ne donne rien.
+		Les deux premieres lignes disent tout : <strong>{ex.homeAbbr} +5</strong> et
+		<strong>{ex.homeAbbr} +3</strong> ratent l'ecart reel du <strong>meme point</strong>, et pourtant
+		+5 rapporte nettement plus — parce que c'est un resultat bien moins courant.
 	</p>
 
 	<h3>Si ce match avait fini {ex.nul.scoreHome} – {ex.nul.scoreAway}</h3>
@@ -239,7 +205,8 @@
 	</div>
 	<p class="tiny muted">
 		« Match nul » ne designe aucune equipe : aucun des deux baremes ne s'impose, l'enjeu retenu est
-		la moyenne des deux ({ex.enjeuNul} pts ici).
+		la moyenne des deux ({ex.enjeuNul} pts ici). C'est le plus gros gain du jeu, et le plus
+		difficile a decrocher.
 	</p>
 </div>
 
@@ -317,7 +284,7 @@
 		font-weight: 700;
 	}
 
-	/**
+	/*
 	 * Les tableaux du site portent des libelles courts et interdisent le retour
 	 * a la ligne. Ici les cellules sont des phrases : sans cette exception, la
 	 * page defilerait lateralement sur telephone au lieu de se replier.

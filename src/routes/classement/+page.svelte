@@ -78,7 +78,7 @@
 				<span class="grow ellipsis">{row.pseudo}</span>
 				<span class="line__stats tiny muted">
 					{row.played > 0 ? percent(row.successRate) : '—'}
-					· {row.exactScores} exacts
+					· {row.exactMargins} exacts
 				</span>
 				<span class="pts">{row.points} <span class="tiny muted">PTS</span></span>
 			</a>
@@ -90,7 +90,7 @@
 	{/if}
 
 	<p class="tiny muted" style="margin:0.8rem 0 0">
-		Departage a egalite : nombre de scores exacts, puis nombre de bons ecarts.
+		Departage a egalite : nombre d'ecarts exacts.
 		{#if view === 'general'}
 			Les semaines marquees TEST sont exclues de ce classement.
 		{/if}
@@ -109,7 +109,6 @@
 					<th>Joueur</th>
 					<th class="num">Points</th>
 					<th class="num">Reussite</th>
-					<th class="num">Scores exacts</th>
 					<th class="num">Ecarts exacts</th>
 				</tr>
 			</thead>
@@ -120,7 +119,6 @@
 						<td><a href="/joueur/{row.userId}">{row.pseudo}</a></td>
 						<td class="num"><strong>{row.points}</strong></td>
 						<td class="num">{row.played > 0 ? percent(row.successRate) : '—'}</td>
-						<td class="num">{row.exactScores}</td>
 						<td class="num">{row.exactMargins}</td>
 					</tr>
 				{/each}

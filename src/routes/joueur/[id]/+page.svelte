@@ -1,6 +1,6 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
-	import { BONUS_LABEL, bonusApplique, PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
+	import { BONUS_LABEL, bonusApplique, pickLabel } from '$lib/nfl';
 	import { stakePoints } from '$lib/scoring';
 
 	let { data } = $props();
@@ -9,7 +9,7 @@
 		return `${Math.round(value * 100)} %`;
 	}
 
-	/** Equipe choisie, ou « Nul » pour un nul predit sans equipe (mode ecart). */
+	/** Equipe choisie, ou « Nul » pour un nul predit, qui n'en designe aucune. */
 	function pickedTeam(row: (typeof data.history)[number]): string {
 		if (row.pickSide === 'home') return row.homeAbbr;
 		if (row.pickSide === 'away') return row.awayAbbr;
@@ -52,9 +52,8 @@
 			</div>
 		</div>
 		<div class="kpi">
-			<div class="kpi__label">Scores exacts</div>
-			<div class="kpi__value">{data.stats.exactScores}</div>
-			<div class="tiny muted">{data.stats.exactMargins} ecarts exacts</div>
+			<div class="kpi__label">Ecarts exacts</div>
+			<div class="kpi__value">{data.stats.exactMargins}</div>
 		</div>
 		<div class="kpi">
 			<div class="kpi__label">Semaines gagnees</div>
@@ -100,9 +99,7 @@
 								<strong>{pickedTeam(row)}</strong>
 								<div class="tiny muted">{stake(row)}</div>
 							</td>
-							<td class="num" title={PICK_MODE_LABEL[row.mode as 'score' | 'margin']}>
-								{pickLabel(row, row.homeAbbr, row.awayAbbr)}
-							</td>
+							<td class="num">{pickLabel(row, row.homeAbbr, row.awayAbbr)}</td>
 							<td class="num">
 								{row.status === 'final' ? `${row.scoreAway}–${row.scoreHome}` : '—'}
 							</td>

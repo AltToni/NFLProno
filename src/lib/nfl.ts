@@ -1,4 +1,4 @@
-import { pickInputFromRow, predictedDiff, type PickMode, type PickSide } from './scoring';
+import { pickInputFromRow, predictedDiff, type PickSide } from './scoring';
 
 export const SEASONTYPE_REGULAR = 2;
 export const SEASONTYPE_PLAYOFFS = 3;
@@ -44,50 +44,33 @@ export const GAME_STATUS_LABEL: Record<string, string> = {
 // Libelles des pronostics
 // ---------------------------------------------------------------------------
 
-export const PICK_MODE_LABEL: Record<PickMode, string> = {
-	margin: 'Vainqueur + ecart',
-	score: 'Score'
-};
-
 /** Libelle du bonus obtenu, partage par la page match et le profil joueur. */
 export const BONUS_LABEL: Record<string, string> = {
 	none: '',
 	margin: 'ecart exact',
 	near: 'ecart approche',
-	exact: 'score exact',
 	draw: 'match nul'
 };
 
-/** Ce qu'un pronostic doit contenir pour etre affichable, dans les deux modes. */
+/** Ce qu'un pronostic doit contenir pour etre affichable. */
 export interface PickShape {
-	mode: PickMode;
 	pickSide: PickSide | null;
-	scoreHomePred: number | null;
-	scoreAwayPred: number | null;
 	marginPred: number | null;
 }
 
 /**
- * Forme derivee d'un ecart signe : « KC +7 », « LV +3 », « Match nul ». Sert
- * aussi bien a l'apercu direct de la saisie en mode score qu'a l'affichage des
- * pronostics des autres joueurs.
+ * Forme lisible d'un ecart signe : « KC +7 », « LV +3 », « Match nul ». Sert
+ * aussi bien a l'apercu de la saisie qu'a l'affichage des pronostics des autres
+ * joueurs.
  */
 export function marginLabel(diff: number, homeAbbr: string, awayAbbr: string): string {
 	if (diff === 0) return 'Match nul';
 	return diff > 0 ? `${homeAbbr} +${diff}` : `${awayAbbr} +${-diff}`;
 }
 
-/**
- * Le pronostic **sous la forme saisie** : « KC +7 » en mode ecart, « 27–20 » en
- * mode score (ordre visiteurs–locaux, celui de tous les scores de l'interface).
- * Deux joueurs peuvent pronostiquer la meme chose de deux facons ; la grille
- * garde la trace de celle qu'ils ont choisie.
- */
+/** Le pronostic tel qu'il a ete saisi : « KC +7 », ou « Match nul ». */
 export function pickLabel(pick: PickShape, homeAbbr: string, awayAbbr: string): string {
-	if (pick.mode === 'margin') {
-		return marginLabel(predictedDiff(pickInputFromRow(pick)), homeAbbr, awayAbbr);
-	}
-	return `${pick.scoreAwayPred ?? '?'}–${pick.scoreHomePred ?? '?'}`;
+	return marginLabel(predictedDiff(pickInputFromRow(pick)), homeAbbr, awayAbbr);
 }
 
 /**
