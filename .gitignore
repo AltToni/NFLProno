@@ -8,3 +8,5 @@ backup
 *.db-shm
 *.db-wal
 .DS_Store
+# Reponses ESPN mises en cache par scripts/analyse-ecarts.ts
+.cache

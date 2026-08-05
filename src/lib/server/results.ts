@@ -95,7 +95,6 @@ export function computeGameScores(
 					bonusKind: breakdown.bonusKind,
 					multiplier: breakdown.multiplier,
 					correct: breakdown.correct ? 1 : 0,
-					exactScore: breakdown.exactScore ? 1 : 0,
 					exactMargin: breakdown.exactMargin ? 1 : 0,
 					computedAt: ts
 				})

@@ -40,12 +40,15 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			testKind: w.testKind
 		})),
 		games: weekBoard(week.id, user.id),
-		multiplier: playoffMultiplier(week.seasontype, week.number, cfg)
+		multiplier: playoffMultiplier(week.seasontype, week.number, cfg),
+		// Le bareme voyage jusqu'aux cartes : c'est lui qui decide du bonus
+		// annonce sous la saisie, et il doit suivre les reglages de l'admin.
+		bareme: cfg
 	};
 };
 
 /** Champ numerique : entier explicite, ou null si absent, vide ou mal forme. */
-function parseScore(raw: FormDataEntryValue | null): number | null {
+function parseEntier(raw: FormDataEntryValue | null): number | null {
 	if (typeof raw !== 'string') return null;
 	const trimmed = raw.trim();
 	if (!/^\d+$/.test(trimmed)) return null;
@@ -79,12 +82,6 @@ export const actions: Actions = {
 		const champ = (nom: string, gameId: string) => form.get(`${nom}:${gameId}`);
 
 		for (const gameId of jeux) {
-			const rawMode = String(champ('mode', gameId) ?? 'margin');
-			if (rawMode !== 'score' && rawMode !== 'margin') {
-				resultat.erreurs[gameId] = 'Mode de saisie invalide.';
-				continue;
-			}
-
 			const rawSide = String(champ('side', gameId) ?? '');
 			const pickSide = rawSide === 'home' || rawSide === 'away' ? rawSide : null;
 			// Drapeau indicatif : au pire on reecrit un pronostic identique, jamais
@@ -93,64 +90,28 @@ export const actions: Actions = {
 			const modifie = String(champ('modifie', gameId) ?? '') === '1';
 
 			/**
-			 * `Number(null)` et `Number('')` valent 0, et 0 est une valeur valide
-			 * dans les deux modes (score 0-0, ou nul predit). Sans ce controle, un
-			 * envoi sans les cases attendues — le chemin sans JavaScript,
-			 * notamment — enregistrerait silencieusement un pari sur le match nul a
-			 * la place du pronostic du joueur.
+			 * `Number(null)` et `Number('')` valent 0, et 0 est une valeur valide —
+			 * c'est le nul predit. Sans ce controle, un envoi sans les champs
+			 * attendus — le chemin sans JavaScript, notamment — enregistrerait
+			 * silencieusement un pari sur le match nul a la place du pronostic du
+			 * joueur.
 			 */
-			if (rawMode === 'margin') {
-				const marginPred = parseScore(champ('margin', gameId));
+			const marginPred = parseEntier(champ('margin', gameId));
 
-				if (marginPred === null) {
-					// Carte vierge : pas une erreur, juste un pronostic qui manque.
-					if (pickSide === null) {
-						resultat.manquants.push(gameId);
-					} else {
-						resultat.erreurs[gameId] = 'Choisis un split, ou « Match nul ».';
-					}
-					continue;
+			if (marginPred === null) {
+				// Carte vierge : pas une erreur, juste un pronostic qui manque.
+				if (pickSide === null) {
+					resultat.manquants.push(gameId);
+				} else {
+					resultat.erreurs[gameId] = 'Annonce un ecart, ou choisis « Match nul ».';
 				}
-
-				if (!modifie) continue;
-
-				try {
-					savePick({ userId: user.id, gameId, mode: 'margin', pickSide, marginPred });
-					resultat.enregistres++;
-				} catch (err) {
-					if (!(err instanceof PickError)) throw err;
-					resultat.erreurs[gameId] = err.message;
-				}
-				continue;
-			}
-
-			const scoreHomePred = parseScore(champ('home', gameId));
-			const scoreAwayPred = parseScore(champ('away', gameId));
-
-			if (pickSide === null && scoreHomePred === null && scoreAwayPred === null) {
-				resultat.manquants.push(gameId);
-				continue;
-			}
-			if (scoreHomePred === null || scoreAwayPred === null) {
-				resultat.erreurs[gameId] = 'Renseigne les deux scores.';
-				continue;
-			}
-			if (pickSide === null) {
-				resultat.erreurs[gameId] = 'Choisis l’equipe a crediter si le match ne finit pas nul.';
 				continue;
 			}
 
 			if (!modifie) continue;
 
 			try {
-				savePick({
-					userId: user.id,
-					gameId,
-					mode: 'score',
-					pickSide,
-					scoreHomePred,
-					scoreAwayPred
-				});
+				savePick({ userId: user.id, gameId, pickSide, marginPred });
 				resultat.enregistres++;
 			} catch (err) {
 				if (!(err instanceof PickError)) throw err;

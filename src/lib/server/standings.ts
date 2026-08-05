@@ -5,14 +5,13 @@ import type { EvolutionPoint, EvolutionSeries, StandingRow } from '$lib/types';
 export type { EvolutionPoint, EvolutionSeries, StandingRow } from '$lib/types';
 
 /**
- * Departage a egalite (spec 4) : points, puis nombre de scores exacts, puis
- * nombre de bons ecarts. Les ex aequo parfaits partagent le meme rang.
+ * Departage a egalite (spec 4) : points, puis nombre d'ecarts exacts. Les ex
+ * aequo parfaits partagent le meme rang.
  */
 function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoints'>[]): StandingRow[] {
 	const sorted = [...rows].sort(
 		(a, b) =>
 			b.points - a.points ||
-			b.exactScores - a.exactScores ||
 			b.exactMargins - a.exactMargins ||
 			a.pseudo.localeCompare(b.pseudo, 'fr')
 	);
@@ -20,7 +19,7 @@ function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoint
 	let lastRank = 0;
 	let lastKey = '';
 	return sorted.map((row, index) => {
-		const key = `${row.points}|${row.exactScores}|${row.exactMargins}`;
+		const key = `${row.points}|${row.exactMargins}`;
 		if (key !== lastKey) {
 			lastRank = index + 1;
 			lastKey = key;
@@ -44,7 +43,6 @@ function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoint
 const SEASON_STANDINGS = `
 	SELECT u.id AS userId, u.pseudo, u.avatar,
 		COALESCE(SUM(s.points), 0)       AS points,
-		COALESCE(SUM(s.exact_score), 0)  AS exactScores,
 		COALESCE(SUM(s.exact_margin), 0) AS exactMargins,
 		COALESCE(SUM(s.correct), 0)      AS corrects,
 		COUNT(s.id)                      AS played
@@ -59,7 +57,6 @@ const SEASON_STANDINGS = `
 const WEEK_STANDINGS = `
 	SELECT u.id AS userId, u.pseudo, u.avatar,
 		COALESCE(SUM(s.points), 0)       AS points,
-		COALESCE(SUM(s.exact_score), 0)  AS exactScores,
 		COALESCE(SUM(s.exact_margin), 0) AS exactMargins,
 		COALESCE(SUM(s.correct), 0)      AS corrects,
 		COUNT(s.id)                      AS played
@@ -113,7 +110,6 @@ export function rankEvolution(season = currentSeason()): {
 		.prepare(
 			`SELECT s.week_id AS weekId, s.user_id AS userId,
 				SUM(s.points) AS points,
-				SUM(s.exact_score) AS exactScores,
 				SUM(s.exact_margin) AS exactMargins
 			 FROM scores s
 			 JOIN weeks w ON w.id = s.week_id
@@ -124,7 +120,6 @@ export function rankEvolution(season = currentSeason()): {
 		weekId: number;
 		userId: number;
 		points: number;
-		exactScores: number;
 		exactMargins: number;
 	}[];
 
@@ -134,8 +129,8 @@ export function rankEvolution(season = currentSeason()): {
 		byWeek.get(row.weekId)!.set(row.userId, row);
 	}
 
-	const cumulative = new Map<number, { points: number; exactScores: number; exactMargins: number }>();
-	for (const u of users) cumulative.set(u.id, { points: 0, exactScores: 0, exactMargins: 0 });
+	const cumulative = new Map<number, { points: number; exactMargins: number }>();
+	for (const u of users) cumulative.set(u.id, { points: 0, exactMargins: 0 });
 
 	const series = new Map<number, EvolutionPoint[]>();
 	for (const u of users) series.set(u.id, []);
@@ -150,7 +145,6 @@ export function rankEvolution(season = currentSeason()): {
 			const acc = cumulative.get(u.id)!;
 			const delta = rows.get(u.id);
 			acc.points += delta?.points ?? 0;
-			acc.exactScores += delta?.exactScores ?? 0;
 			acc.exactMargins += delta?.exactMargins ?? 0;
 		}
 
@@ -159,7 +153,6 @@ export function rankEvolution(season = currentSeason()): {
 			.sort(
 				(a, b) =>
 					b.acc.points - a.acc.points ||
-					b.acc.exactScores - a.acc.exactScores ||
 					b.acc.exactMargins - a.acc.exactMargins ||
 					a.user.pseudo.localeCompare(b.user.pseudo, 'fr')
 			);
@@ -167,7 +160,7 @@ export function rankEvolution(season = currentSeason()): {
 		let lastRank = 0;
 		let lastKey = '';
 		ordered.forEach((entry, index) => {
-			const key = `${entry.acc.points}|${entry.acc.exactScores}|${entry.acc.exactMargins}`;
+			const key = `${entry.acc.points}|${entry.acc.exactMargins}`;
 			if (key !== lastKey) {
 				lastRank = index + 1;
 				lastKey = key;
@@ -194,7 +187,6 @@ export interface PlayerStats {
 	points: number;
 	played: number;
 	corrects: number;
-	exactScores: number;
 	exactMargins: number;
 	successRate: number;
 	averagePoints: number;
@@ -213,7 +205,6 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 			`SELECT COALESCE(SUM(s.points), 0) AS points,
 				COUNT(s.id) AS played,
 				COALESCE(SUM(s.correct), 0) AS corrects,
-				COALESCE(SUM(s.exact_score), 0) AS exactScores,
 				COALESCE(SUM(s.exact_margin), 0) AS exactMargins
 			 FROM scores s
 			 JOIN weeks w ON w.id = s.week_id
@@ -221,7 +212,7 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 		)
 		.get({ userId, season }) as any;
 
-	// `pick_side IS NOT NULL` ecarte le nul predit sans equipe (mode « ecart ») :
+	// `pick_side IS NOT NULL` ecarte le nul predit, qui ne designe aucune equipe :
 	// aucune probabilite ne lui correspond, il n'a donc pas sa place dans le
 	// palmares des upsets.
 	const upset = sqlite
@@ -253,7 +244,6 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 		points: agg?.points ?? 0,
 		played: agg?.played ?? 0,
 		corrects: agg?.corrects ?? 0,
-		exactScores: agg?.exactScores ?? 0,
 		exactMargins: agg?.exactMargins ?? 0,
 		successRate: agg?.played > 0 ? agg.corrects / agg.played : 0,
 		averagePoints: agg?.played > 0 ? agg.points / agg.played : 0,
@@ -277,11 +267,10 @@ export function playerHistory(userId: number, season = currentSeason()) {
 				g.score_home AS scoreHome, g.score_away AS scoreAway, g.status,
 				g.kickoff_utc AS kickoffUtc,
 				w.label AS weekLabel, w.id AS weekId,
-				p.mode AS mode, p.pick_side AS pickSide,
-				p.score_home_pred AS scoreHomePred, p.score_away_pred AS scoreAwayPred,
-				p.margin_pred AS marginPred,
+				p.pick_side AS pickSide, p.margin_pred AS marginPred,
 				o.base_points_home AS basePointsHome, o.base_points_away AS basePointsAway,
-				s.points, s.bonus_kind AS bonusKind, s.correct
+				s.points, s.base_points AS basePoints, s.bonus_points AS bonusPoints,
+				s.bonus_kind AS bonusKind, s.correct
 			 FROM picks p
 			 JOIN games g ON g.id = p.game_id
 			 JOIN weeks w ON w.id = g.week_id

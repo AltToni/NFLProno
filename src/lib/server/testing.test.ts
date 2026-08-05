@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { bonusEcartExact } from '$lib/scoring';
 
 /**
  * Test d'integration sur une base jetable. Il repond a la question posee au
@@ -116,8 +117,7 @@ beforeAll(async () => {
 			userId: joueurId,
 			gameId: VRAI_MATCH,
 			pickSide: 'home',
-			scoreHomePred: 24,
-			scoreAwayPred: 20,
+			marginPred: 4,
 			createdAt: 1,
 			updatedAt: 1
 		})
@@ -232,60 +232,19 @@ describe('semaine de simulation', () => {
 	it('accepte les pronostics avant le kickoff, dans les deux modes', () => {
 		const board = m.picks.weekBoard(semaineId, joueurId);
 
-		// Les deux modes cote a cote sur la meme semaine : split annonce sur le
-		// premier match (qui finit 28-13, soit 15 d'ecart), nul predit sans equipe
-		// sur le troisieme (qui finit 20-20), scores predits sur les deux autres.
-		m.picks.savePick({
-			userId: joueurId,
-			gameId: board[0].id,
-			mode: 'margin',
-			pickSide: 'home',
-			marginPred: 15
-		});
-		m.picks.savePick({
-			userId: joueurId,
-			gameId: board[1].id,
-			mode: 'score',
-			pickSide: 'home',
-			scoreHomePred: 21,
-			scoreAwayPred: 17
-		});
-		m.picks.savePick({
-			userId: joueurId,
-			gameId: board[2].id,
-			mode: 'margin',
-			pickSide: null,
-			marginPred: 0
-		});
-		m.picks.savePick({
-			userId: joueurId,
-			gameId: board[3].id,
-			mode: 'score',
-			pickSide: 'home',
-			scoreHomePred: 21,
-			scoreAwayPred: 17
-		});
+		// Un ecart exact sur le premier match (qui finit 28-13, soit 15 d'ecart),
+		// un nul predit sans equipe sur le troisieme (qui finit 20-20), et deux
+		// ecarts rates sur les autres.
+		m.picks.savePick({ userId: joueurId, gameId: board[0].id, pickSide: 'home', marginPred: 15 });
+		m.picks.savePick({ userId: joueurId, gameId: board[1].id, pickSide: 'home', marginPred: 4 });
+		m.picks.savePick({ userId: joueurId, gameId: board[2].id, pickSide: null, marginPred: 0 });
+		m.picks.savePick({ userId: joueurId, gameId: board[3].id, pickSide: 'home', marginPred: 4 });
 
 		const apres = m.picks.weekBoard(semaineId, joueurId);
 		expect(apres.every((g) => g.pick !== null)).toBe(true);
-		expect(apres.map((g) => g.pick?.mode)).toEqual(['margin', 'score', 'margin', 'score']);
-
-		// Un mode ne remplit jamais les colonnes de l'autre : une ligne ne peut pas
-		// raconter deux pronostics.
-		expect(apres[0].pick).toMatchObject({
-			mode: 'margin',
-			pickSide: 'home',
-			marginPred: 15,
-			scoreHomePred: null,
-			scoreAwayPred: null
-		});
-		expect(apres[2].pick).toMatchObject({ mode: 'margin', pickSide: null, marginPred: 0 });
-		expect(apres[1].pick).toMatchObject({
-			mode: 'score',
-			scoreHomePred: 21,
-			scoreAwayPred: 17,
-			marginPred: null
-		});
+		expect(apres[0].pick).toMatchObject({ pickSide: 'home', marginPred: 15 });
+		// Un nul predit ne designe aucune equipe, meme si l'appelant en passe une.
+		expect(apres[2].pick).toMatchObject({ pickSide: null, marginPred: 0 });
 	});
 
 	it('refuse une saisie incoherente sans toucher au pronostic enregistre', () => {
@@ -295,28 +254,23 @@ describe('semaine de simulation', () => {
 			(input: Omit<Parameters<typeof m.picks.savePick>[0], 'userId' | 'gameId'>) => () =>
 				m.picks.savePick({ userId: joueurId, gameId, ...input });
 
-		// Mode split : le split et l'equipe vont ensemble, ou pas du tout.
-		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 0 })).toThrow(/nul/);
-		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 6 })).toThrow(/equipe/);
-		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 100 })).toThrow(/entre 0 et 99/);
-		expect(saisie({ mode: 'margin', pickSide: 'home' })).toThrow(/entre 0 et 99/);
-		// Et seuls les huit splits proposes sont jouables.
-		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 5 })).toThrow(/Split invalide/);
-		expect(saisie({ mode: 'margin', pickSide: 'home', marginPred: 25 })).toThrow(/Split invalide/);
+		// L'ecart et l'equipe vont ensemble, ou pas du tout.
+		expect(saisie({ pickSide: 'home', marginPred: 0 })).toThrow(/nul/);
+		expect(saisie({ pickSide: null, marginPred: 6 })).toThrow(/equipe/);
+		expect(saisie({ pickSide: 'home' })).toThrow(/entier positif/);
+		expect(saisie({ pickSide: 'home', marginPred: -1 })).toThrow(/entier positif/);
+		// L'ecart est libre : ce qui etait « hors liste » est desormais jouable.
+		expect(saisie({ pickSide: 'home', marginPred: 5 })).not.toThrow();
+		expect(saisie({ pickSide: 'home', marginPred: 25 })).not.toThrow();
+		// Seule la borne haute reste, contre la faute de frappe.
+		expect(saisie({ pickSide: 'home', marginPred: 61 })).toThrow(/trop grand/);
 		// Ecart 0 sans equipe, en revanche, c'est un nul predit : parfaitement valide.
-		expect(saisie({ mode: 'margin', pickSide: null, marginPred: 0 })).not.toThrow();
-
-		// Mode score : le refus des scores incoherents ne bouge pas.
-		expect(
-			saisie({ mode: 'score', pickSide: 'home', scoreHomePred: 17, scoreAwayPred: 24 })
-		).toThrow(/victoire/);
-		expect(saisie({ mode: 'score', pickSide: 'home' })).toThrow(/entre 0 et 99/);
+		expect(saisie({ pickSide: null, marginPred: 0 })).not.toThrow();
 
 		// Aucun refus n'a ecrase le pronostic du joueur ; le nul predit ci-dessus,
-		// lui, est bien passe, on remet donc le split annonce au depart.
-		m.picks.savePick({ userId: joueurId, gameId, mode: 'margin', pickSide: 'home', marginPred: 15 });
+		// lui, est bien passe, on remet donc l'ecart du depart.
+		m.picks.savePick({ userId: joueurId, gameId, pickSide: 'home', marginPred: 15 });
 		expect(m.picks.weekBoard(semaineId, joueurId)[0].pick).toMatchObject({
-			mode: 'margin',
 			pickSide: 'home',
 			marginPred: 15
 		});
@@ -344,10 +298,8 @@ describe('semaine de simulation', () => {
 				m.picks.savePick({
 					userId: joueurId,
 					gameId: stored[0].id,
-					mode: 'score',
 					pickSide: 'away',
-					scoreHomePred: 10,
-					scoreAwayPred: 30
+					marginPred: 20
 				})
 			).toThrow(/verrouille/);
 
@@ -356,10 +308,8 @@ describe('semaine de simulation', () => {
 				m.picks.savePick({
 					userId: joueurId,
 					gameId: stored[3].id,
-					mode: 'score',
 					pickSide: 'away',
-					scoreHomePred: 10,
-					scoreAwayPred: 30
+					marginPred: 20
 				})
 			).not.toThrow();
 
@@ -398,7 +348,7 @@ describe('semaine de simulation', () => {
 		}
 	});
 
-	it('score les pronostics du mode « vainqueur + split »', () => {
+	it('score les pronostics de la semaine', () => {
 		const { db } = m.db;
 		const { scores } = m.schema;
 		const board = m.picks.weekBoard(semaineId, joueurId);
@@ -415,19 +365,17 @@ describe('semaine de simulation', () => {
 		expect(ligne(board[0].id)).toMatchObject({
 			bonusKind: 'margin',
 			correct: 1,
-			exactMargin: 1,
-			exactScore: 0
+			exactMargin: 1
 		});
 		expect(ligne(board[0].id)!.points).toBeGreaterThan(0);
 
-		// Troisieme match : 20-20, nul predit sans equipe. Meme bonus, applique a
-		// la moyenne des deux baremes faute d'equipe designee.
+		// Troisieme match : 20-20, nul predit sans equipe. Le nul etant l'issue la
+		// plus rare du jeu, son bonus est au plafond ; il s'applique a la moyenne
+		// des deux baremes, faute d'equipe designee.
 		const nul = ligne(board[2].id)!;
-		const enjeuNul = Math.round(
-			(board[2].basePointsHome! + board[2].basePointsAway!) / 2
-		);
-		expect(nul).toMatchObject({ bonusKind: 'margin', correct: 1, exactScore: 0 });
-		expect(nul.points).toBe(Math.round(enjeuNul * 1.5));
+		const enjeuNul = Math.round((board[2].basePointsHome! + board[2].basePointsAway!) / 2);
+		expect(nul).toMatchObject({ bonusKind: 'margin', correct: 1 });
+		expect(nul.points).toBe(Math.round(enjeuNul * (1 + bonusEcartExact(0))));
 	});
 
 	it('apparait au classement hebdomadaire mais pas au general', () => {

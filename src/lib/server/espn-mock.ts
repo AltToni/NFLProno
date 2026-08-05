@@ -59,7 +59,7 @@ export const FIXTURES: Fixture[] = [
 		home: { abbr: 'ARD', name: "Aurochs d'Ardenne" },
 		away: { abbr: 'BRB', name: 'Bisons du Brabant' },
 		// Gros favori : ~80 % implicite, donc peu de points a la cle. Ecart final
-		// de 15 points, soit un split jouable exactement : exerce le bonus plein.
+		// de 15 points : un ecart rare, qui exerce le haut de la table de rarete.
 		moneylineHome: -400,
 		moneylineAway: 300,
 		quarts: [
@@ -74,7 +74,7 @@ export const FIXTURES: Fixture[] = [
 		home: { abbr: 'CON', name: 'Corbeaux du Condroz' },
 		away: { abbr: 'FAG', name: 'Faucons de Gaume' },
 		// La surprise : le favori mene jusqu'au dernier quart et perd. Ecart final
-		// de 7 points, a un point du split +6 : exerce le bonus de proximite.
+		// de 7 points : a un point d'un ecart courant, exerce l'attenuation.
 		moneylineHome: -200,
 		moneylineAway: 170,
 		quarts: [

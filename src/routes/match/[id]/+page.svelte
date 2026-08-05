@@ -1,8 +1,7 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
-	import { BONUS_LABEL, GAME_STATUS_LABEL, PICK_MODE_LABEL, marginLabel, pickLabel } from '$lib/nfl';
-	import { pickInputFromRow, predictedDiff } from '$lib/scoring';
+	import { BONUS_LABEL, bonusApplique, GAME_STATUS_LABEL, pickLabel } from '$lib/nfl';
 
 	let { data } = $props();
 
@@ -24,10 +23,6 @@
 		return p === null || p === undefined ? '—' : `${Math.round(p * 100)} %`;
 	}
 
-	/** Le meme pronostic vu comme un ecart signe, quel que soit le mode de saisie. */
-	function ecartPredit(entry: (typeof data.entries)[number]): string {
-		return marginLabel(predictedDiff(pickInputFromRow(entry)), game.homeAbbr, game.awayAbbr);
-	}
 </script>
 
 <svelte:head><title>{game.awayAbbr} @ {game.homeAbbr} — Pronos NFL</title></svelte:head>
@@ -127,18 +122,11 @@
 						<tr>
 							<td><a href="/joueur/{entry.userId}">{entry.pseudo}</a></td>
 							<td>
-								<!-- La forme saisie d'abord — « KC +7 » ou « 27–20 » — puis, pour un
-									 score predit, l'ecart qu'il implique. -->
-								<strong title={PICK_MODE_LABEL[entry.mode]}>
-									{pickLabel(entry, game.homeAbbr, game.awayAbbr)}
-								</strong>
+								<strong>{pickLabel(entry, game.homeAbbr, game.awayAbbr)}</strong>
 								{#if entry.correct === true}
 									<span class="badge badge--open">✓</span>
 								{:else if entry.correct === false}
 									<span class="badge">✗</span>
-								{/if}
-								{#if entry.mode === 'score'}
-									<div class="tiny muted">{ecartPredit(entry)}</div>
 								{/if}
 							</td>
 							<td class="num">
@@ -146,6 +134,16 @@
 									<strong>{entry.points}</strong>
 									{#if entry.bonusKind && entry.bonusKind !== 'none'}
 										<span class="badge badge--upset">{BONUS_LABEL[entry.bonusKind]}</span>
+									{/if}
+									<!-- Le calcul, une fois le match final : l'enjeu de base, puis
+										 le bonus qui s'y est ajoute. -->
+									{@const bonus = bonusApplique(entry.basePoints, entry.bonusPoints)}
+									{#if bonus !== null}
+										<div class="tiny muted">
+											{entry.basePoints} × (1 + {Math.round(bonus * 100)} %)
+										</div>
+									{:else if entry.basePoints !== null && entry.points > 0}
+										<div class="tiny muted">{entry.basePoints} pts, sans bonus</div>
 									{/if}
 								{:else}
 									—

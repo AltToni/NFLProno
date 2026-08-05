@@ -5,12 +5,16 @@ import {
 	computeScore,
 	devig,
 	impliedProbabilityRaw,
+	bonusEcart,
+	bonusEcartExact,
+	ECART_MAX,
+	ECARTS,
+	frequenceEcart,
 	isPickConsistent,
-	isSplitChoice,
+	MARGIN_MAX,
 	pickInputFromRow,
 	playoffMultiplier,
 	predictedDiff,
-	SPLIT_CHOICES,
 	stakePoints,
 	stakesFromMoneylines,
 	type ScoringConfig
@@ -94,199 +98,147 @@ describe('enjeux affiches', () => {
 const GAME = { basePointsHome: 31, basePointsAway: 125 };
 
 describe('calcul des points', () => {
-	it('vainqueur correct sans bonus', () => {
-		const r = computeScore(
-			{ pickSide: 'home', scoreHomePred: 30, scoreAwayPred: 10 },
-			GAME,
-			{ scoreHome: 24, scoreAway: 20 },
-			cfg
-		);
+	// Reel +4 (24-20) : l'ecart annonce decide du bonus, pas du vainqueur.
+	const REEL = { scoreHome: 24, scoreAway: 20 };
+
+	it('vainqueur correct, ecart trop loin : la base, sans bonus', () => {
+		const r = computeScore({ pickSide: 'home', marginPred: 12 }, GAME, REEL, cfg);
 		expect(r.points).toBe(31);
 		expect(r.bonusKind).toBe('none');
 		expect(r.correct).toBe(true);
 	});
 
 	it('vainqueur incorrect : zero, jamais de negatif', () => {
-		const r = computeScore(
-			{ pickSide: 'away', scoreHomePred: 10, scoreAwayPred: 30 },
-			GAME,
-			{ scoreHome: 24, scoreAway: 20 },
-			cfg
-		);
+		const r = computeScore({ pickSide: 'away', marginPred: 4 }, GAME, REEL, cfg);
 		expect(r.points).toBe(0);
 		expect(r.correct).toBe(false);
 	});
 
-	it('ecart exact : +50 %', () => {
-		const r = computeScore(
-			{ pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 23 },
-			GAME,
-			{ scoreHome: 24, scoreAway: 20 },
-			cfg
-		);
-		expect(r.points).toBe(Math.round(31 * 1.5));
+	it('ecart exact : le bonus de rarete tombe plein', () => {
+		const r = computeScore({ pickSide: 'home', marginPred: 4 }, GAME, REEL, cfg);
+		expect(r.points).toBe(56); // round(31 x 1,803)
 		expect(r.bonusKind).toBe('margin');
 		expect(r.exactMargin).toBe(true);
-		expect(r.exactScore).toBe(false);
-	});
-
-	it('score exact : +100 %, non cumule avec l’ecart', () => {
-		// Exemple de la spec : outsider a 125 pts, score exact -> 250 pts
-		const r = computeScore(
-			{ pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 24 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 24 },
-			cfg
-		);
-		expect(r.points).toBe(250);
-		expect(r.bonusKind).toBe('exact');
-		expect(r.exactScore).toBe(true);
 	});
 
 	it('detail base + bonus coherent avec le total', () => {
-		const r = computeScore(
-			{ pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 24 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 24 },
-			cfg
-		);
+		const r = computeScore({ pickSide: 'home', marginPred: 4 }, GAME, REEL, cfg);
+		expect(r.basePoints).toBe(31);
+		expect(r.bonusPoints).toBe(25);
 		expect(r.basePoints + r.bonusPoints).toBe(r.points);
-		expect(r.basePoints).toBe(125);
-		expect(r.bonusPoints).toBe(125);
+	});
+
+	it('recompense l’outsider a proportion de son enjeu', () => {
+		// LV vaut 125 pts : le meme ecart exact y rapporte quatre fois plus.
+		const r = computeScore({ pickSide: 'away', marginPred: 4 }, GAME, { scoreHome: 20, scoreAway: 24 }, cfg);
+		expect(r.points).toBe(225); // round(125 x 1,803)
+		expect(r.correct).toBe(true);
 	});
 });
 
 describe('match nul', () => {
+	const NUL = { scoreHome: 20, scoreAway: 20 };
+
 	it('donne 50 % des points de base de l’equipe choisie', () => {
-		const r = computeScore(
-			{ pickSide: 'away', scoreHomePred: 17, scoreAwayPred: 24 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 20 },
-			cfg
-		);
-		expect(r.points).toBe(63); // round(125 * 0.5)
+		const r = computeScore({ pickSide: 'away', marginPred: 7 }, GAME, NUL, cfg);
+		expect(r.points).toBe(63); // round(125 x 0,5)
 		expect(r.bonusKind).toBe('draw');
 		expect(r.correct).toBe(false);
 	});
 
 	it('recompense le joueur qui avait predit un nul', () => {
-		const r = computeScore(
-			{ pickSide: 'away', scoreHomePred: 17, scoreAwayPred: 17 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 20 },
-			cfg
-		);
-		expect(r.points).toBe(Math.round(125 * 1.5));
+		const r = computeScore({ pickSide: null, marginPred: 0 }, GAME, NUL, cfg);
+		// Enjeu neutre (moyenne des deux baremes) et bonus au plafond.
+		expect(r.points).toBe(Math.round(78 * (1 + cfg.bonusPlafond)));
 		expect(r.bonusKind).toBe('margin');
-	});
-
-	it('score de nul exact : bonus de score exact', () => {
-		const r = computeScore(
-			{ pickSide: 'home', scoreHomePred: 20, scoreAwayPred: 20 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 20 },
-			cfg
-		);
-		expect(r.points).toBe(62); // round(31 * 2)
-		expect(r.bonusKind).toBe('exact');
+		expect(r.correct).toBe(true);
 	});
 });
 
-describe('mode « vainqueur + split »', () => {
+describe('vainqueur + ecart', () => {
 	// GAME : 31 pts cote locaux, 125 cote visiteurs. Un nul predit ne designant
 	// aucune equipe, son enjeu est la moyenne des deux : round(156 / 2) = 78.
 	const ENJEU_NUL = 78;
-	// Locaux +6 : un des huit splits jouables, atteint exactement.
-	const SIX = { scoreHome: 24, scoreAway: 18 };
+	const SIX = { scoreHome: 24, scoreAway: 18 }; // locaux +6
 
-	it('split exact : +50 %', () => {
+	it('paie peu un ecart banal, meme touche pile', () => {
+		// +3 est l'ecart le plus frequent du football americain (14,6 % des
+		// matchs) : son bonus est proche du plancher.
 		const r = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 6 },
+			{ pickSide: 'home', marginPred: 3 },
 			GAME,
-			SIX,
+			{ scoreHome: 21, scoreAway: 18 },
 			cfg
 		);
-		expect(r.points).toBe(47); // round(31 * 1,5)
+		expect(bonusEcartExact(3, cfg)).toBeCloseTo(0.2576, 3);
+		expect(r.points).toBe(39); // round(31 x 1,2576)
 		expect(r.bonusKind).toBe('margin');
 		expect(r.exactMargin).toBe(true);
 		expect(r.correct).toBe(true);
 	});
 
-	it('split rate de plus d\'un point : la base, sans bonus', () => {
+	it('paie le plafond un ecart rare touche pile', () => {
+		// +12 ne sort que dans 1,8 % des matchs : k / f depasse le plafond.
 		const r = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 12 },
+			{ pickSide: 'home', marginPred: 12 },
 			GAME,
-			SIX,
+			{ scoreHome: 30, scoreAway: 18 },
 			cfg
 		);
-		expect(r.points).toBe(31);
-		expect(r.bonusKind).toBe('none');
-		expect(r.exactMargin).toBe(false);
-		expect(r.nearMargin).toBe(false);
-		expect(r.correct).toBe(true);
+		expect(bonusEcartExact(12, cfg)).toBe(cfg.bonusPlafond);
+		expect(r.points).toBe(93); // round(31 x 3)
+		expect(r.bonusKind).toBe('margin');
+		expect(r.basePoints + r.bonusPoints).toBe(r.points);
 	});
 
-	it('mauvais vainqueur : zero, meme avec le bon split', () => {
-		const r = computeScore(
-			{ mode: 'margin', pickSide: 'away', marginPred: 6 },
-			GAME,
-			SIX,
-			cfg
-		);
+	it("le bonus decroit d'un quart par point d'erreur, puis s'eteint", () => {
+		const annonce = { pickSide: 'home' as const, marginPred: 6 };
+		const pointsPour = (reel: number) =>
+			computeScore(annonce, GAME, { scoreHome: 18 + reel, scoreAway: 18 }, cfg).points;
+
+		expect(pointsPour(6)).toBe(48); // pile     : bonus plein
+		expect(pointsPour(7)).toBe(44); // erreur 1 : trois quarts
+		expect(pointsPour(5)).toBe(44); // symetrique
+		expect(pointsPour(8)).toBe(39); // erreur 2 : moitie
+		expect(pointsPour(9)).toBe(35); // erreur 3 : un quart
+		expect(pointsPour(10)).toBe(31); // erreur 4 : plus rien, la base reste
+		expect(pointsPour(14)).toBe(31); // au-dela, toujours rien de plus
+	});
+
+	it('classe le bonus obtenu : exact, partiel, ou aucun', () => {
+		const annonce = { pickSide: 'home' as const, marginPred: 6 };
+		const kind = (reel: number) =>
+			computeScore(annonce, GAME, { scoreHome: 18 + reel, scoreAway: 18 }, cfg).bonusKind;
+		expect(kind(6)).toBe('margin');
+		expect(kind(7)).toBe('near');
+		expect(kind(10)).toBe('none');
+	});
+
+	it('mauvais vainqueur : zero, meme avec le bon ecart', () => {
+		const r = computeScore({ pickSide: 'away', marginPred: 6 }, GAME, SIX, cfg);
 		expect(r.points).toBe(0);
 		expect(r.correct).toBe(false);
 	});
 
-	it('jamais eligible au x2 : aucun score n\'est predit', () => {
-		// Meme match, meme ecart exact : le mode score qui tombe pile touche 62
-		// pts (31 x 2), le mode split plafonne a 47 (31 x 1,5).
-		const split = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 6 },
-			GAME,
-			SIX,
-			cfg
-		);
-		const score = computeScore(
-			{ pickSide: 'home', scoreHomePred: 24, scoreAwayPred: 18 },
-			GAME,
-			SIX,
-			cfg
-		);
-		expect(split.points).toBe(47);
-		expect(split.exactScore).toBe(false);
-		expect(score.points).toBe(62);
-		expect(score.exactScore).toBe(true);
-	});
-
-	it('detail base + bonus coherent avec le total', () => {
+	it('nul predit et match nul : le plafond, sur la moyenne des deux baremes', () => {
+		// Le nul est l'issue la plus rare du jeu (0,35 % des matchs) : son bonus
+		// est au plafond, et c'est le plus gros gain unitaire du bareme.
 		const r = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 6 },
-			GAME,
-			SIX,
-			cfg
-		);
-		expect(r.basePoints).toBe(31);
-		expect(r.bonusPoints).toBe(16);
-		expect(r.basePoints + r.bonusPoints).toBe(r.points);
-	});
-
-	it('nul predit et match nul : +50 % sur la moyenne des deux baremes', () => {
-		const r = computeScore(
-			{ mode: 'margin', pickSide: null, marginPred: 0 },
+			{ pickSide: null, marginPred: 0 },
 			GAME,
 			{ scoreHome: 20, scoreAway: 20 },
 			cfg
 		);
-		expect(r.points).toBe(Math.round(ENJEU_NUL * 1.5)); // 117
+		expect(bonusEcartExact(0, cfg)).toBe(cfg.bonusPlafond);
+		expect(r.points).toBe(Math.round(ENJEU_NUL * 3)); // 234
 		expect(r.bonusKind).toBe('margin');
 		expect(r.correct).toBe(true);
-		expect(r.exactScore).toBe(false);
 		expect(r.exactMargin).toBe(true);
 	});
 
 	it('nul predit et match avec vainqueur : zero, aucune equipe a crediter', () => {
 		const r = computeScore(
-			{ mode: 'margin', pickSide: null, marginPred: 0 },
+			{ pickSide: null, marginPred: 0 },
 			GAME,
 			{ scoreHome: 24, scoreAway: 20 },
 			cfg
@@ -295,40 +247,44 @@ describe('mode « vainqueur + split »', () => {
 		expect(r.correct).toBe(false);
 	});
 
-	it('equipe choisie et match nul : 50 % de son bareme, comme en mode score', () => {
+	it('equipe choisie et match nul : 50 % de son bareme', () => {
 		const away = computeScore(
-			{ mode: 'margin', pickSide: 'away', marginPred: 6 },
+			{ pickSide: 'away', marginPred: 6 },
 			GAME,
 			{ scoreHome: 20, scoreAway: 20 },
 			cfg
 		);
-		expect(away.points).toBe(63); // round(125 * 0,5)
+		expect(away.points).toBe(63); // round(125 x 0,5)
 		expect(away.bonusKind).toBe('draw');
 		expect(away.correct).toBe(false);
+	});
 
-		const home = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 3 },
+	it("un nul reel n'est jamais un ecart « rate de peu »", () => {
+		// Annonce +1 sur un match qui finit nul : c'est le mauvais resultat, pas
+		// une quasi-reussite. La branche du nul l'emporte sur l'attenuation.
+		const r = computeScore(
+			{ pickSide: 'home', marginPred: 1 },
 			GAME,
 			{ scoreHome: 20, scoreAway: 20 },
 			cfg
 		);
-		expect(home.points).toBe(16); // round(31 * 0,5)
-		expect(home.bonusKind).toBe('draw');
+		expect(r.bonusKind).toBe('draw');
+		expect(r.points).toBe(16); // round(31 x 0,5)
 	});
 
 	it('suit le multiplicateur de playoffs', () => {
 		const r = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 6 },
+			{ pickSide: 'home', marginPred: 6 },
 			{ ...GAME, multiplier: 2 },
 			SIX,
 			{ ...cfg, playoffsEnabled: true }
 		);
-		expect(r.points).toBe(93); // round(31 * 1,5 * 2)
+		expect(r.points).toBe(96); // round(31 x 1,5433 x 2)
 	});
 
 	it('deux appels identiques donnent le meme resultat', () => {
 		const args = [
-			{ mode: 'margin' as const, pickSide: 'home' as const, marginPred: 6 },
+			{ pickSide: 'home' as const, marginPred: 6 },
 			GAME,
 			SIX,
 			cfg
@@ -337,110 +293,68 @@ describe('mode « vainqueur + split »', () => {
 	});
 });
 
-describe('les huit splits jouables', () => {
-	it('couvre tout ecart de 2 a 25 par exactement un split', () => {
-		// L'espacement de 3 est ce qui rend le bonus de proximite sans ambiguite :
-		// jamais deux splits a un point du meme resultat, jamais aucun.
-		for (let reel = 2; reel <= 25; reel++) {
-			const gagnants = SPLIT_CHOICES.filter((s) => Math.abs(reel - s) <= 1);
-			expect(gagnants, `ecart reel de ${reel}`).toHaveLength(1);
+describe('bonus de rarete', () => {
+	it('rend un bonus decroissant avec la frequence', () => {
+		// L'ordre des bonus doit etre exactement l'inverse de celui des
+		// frequences : c'est toute la promesse faite au joueur.
+		const ecarts = [3, 7, 6, 10, 17, 21];
+		const parFrequence = [...ecarts].sort((a, b) => frequenceEcart(b) - frequenceEcart(a));
+		const parBonus = [...ecarts].sort((a, b) => bonusEcartExact(a, cfg) - bonusEcartExact(b, cfg));
+		expect(parBonus).toEqual(parFrequence);
+	});
+
+	it('reste borne entre le plancher et le plafond', () => {
+		for (let m = 0; m <= ECART_MAX; m++) {
+			const b = bonusEcartExact(m, cfg);
+			expect(b).toBeGreaterThanOrEqual(cfg.bonusPlancher);
+			expect(b).toBeLessThanOrEqual(cfg.bonusPlafond);
 		}
 	});
 
-	it('laisse un ecart d\'un point sans le moindre bonus', () => {
-		// 21-20 : le premier split est a 2 points, rien n'est gagnable.
-		expect(SPLIT_CHOICES.filter((s) => Math.abs(1 - s) <= 1)).toHaveLength(0);
+	it('regroupe la queue au-dela du dernier seau', () => {
+		// Un ecart de 45 n'est pas plus previsible qu'un de 30 : meme frequence,
+		// donc meme bonus.
+		expect(frequenceEcart(45)).toBe(frequenceEcart(ECART_MAX));
+		expect(bonusEcartExact(45, cfg)).toBe(bonusEcartExact(ECART_MAX, cfg));
 	});
 
-	it('reconnait ses propres valeurs, et elles seules', () => {
-		for (const s of SPLIT_CHOICES) expect(isSplitChoice(s)).toBe(true);
-		for (const autre of [0, 1, 2, 4, 7, 13, 25, 27]) expect(isSplitChoice(autre)).toBe(false);
-	});
-});
-
-describe('bonus de proximite : split rate d\'un point', () => {
-	const PICK = { mode: 'margin' as const, pickSide: 'home' as const, marginPred: 6 };
-
-	it('accorde les 3/4 du bonus d\'ecart', () => {
-		// Reel +7, split +6 : facteur 1 + 0,5 x 0,75 = 1,375 -> round(31 x 1,375).
-		const r = computeScore(PICK, GAME, { scoreHome: 25, scoreAway: 18 }, cfg);
-		expect(r.points).toBe(43);
-		expect(r.bonusKind).toBe('near');
-		expect(r.nearMargin).toBe(true);
-		expect(r.exactMargin).toBe(false);
-		expect(r.correct).toBe(true);
-		expect(r.basePoints + r.bonusPoints).toBe(r.points);
+	it('est calibre : le bonus moyen pondere vaut 100 %', () => {
+		// La propriete qui justifie `k`. Le bareme redistribue les points entre
+		// ecarts banals et ecarts rares, il n'en cree pas.
+		let moyenne = 0;
+		for (let m = 0; m <= ECART_MAX; m++) {
+			moyenne += ECARTS.frequences[m] * bonusEcartExact(m, cfg);
+		}
+		expect(moyenne).toBeCloseTo(1, 4);
 	});
 
-	it('marche des deux cotes du split', () => {
-		// Reel +5, meme split +6 : rate d'un point dans l'autre sens.
-		const r = computeScore(PICK, GAME, { scoreHome: 23, scoreAway: 18 }, cfg);
-		expect(r.bonusKind).toBe('near');
-		expect(r.points).toBe(43);
+	it('la table somme a 1 et compte tous les matchs analyses', () => {
+		const somme = ECARTS.frequences.reduce((s, f) => s + f, 0);
+		expect(somme).toBeCloseTo(1, 10);
+		expect(ECARTS.effectifs.reduce((s, n) => s + n, 0)).toBe(ECARTS.matchs);
 	});
 
-	it('s\'intercale entre le split exact et l\'absence de bonus', () => {
-		const exact = computeScore(PICK, GAME, { scoreHome: 24, scoreAway: 18 }, cfg); // +6
-		const proche = computeScore(PICK, GAME, { scoreHome: 25, scoreAway: 18 }, cfg); // +7
-		const rate = computeScore(PICK, GAME, { scoreHome: 28, scoreAway: 18 }, cfg); // +10
-		expect([exact.points, proche.points, rate.points]).toEqual([47, 43, 31]);
-	});
-
-	it('ne s\'applique pas au mode score, qui garde la regle stricte', () => {
-		// Ecart predit +6 (24-18), reel +7 : rien. C'est la contrepartie assumee
-		// de la liberte du mode score, qui peut viser n'importe quel ecart.
-		const r = computeScore(
-			{ pickSide: 'home', scoreHomePred: 24, scoreAwayPred: 18 },
-			GAME,
-			{ scoreHome: 25, scoreAway: 18 },
-			cfg
-		);
-		expect(r.bonusKind).toBe('none');
-		expect(r.nearMargin).toBe(false);
-		expect(r.points).toBe(31);
-	});
-
-	it('ne rattrape jamais un mauvais vainqueur', () => {
-		const r = computeScore(
-			{ mode: 'margin', pickSide: 'away', marginPred: 6 },
-			GAME,
-			{ scoreHome: 25, scoreAway: 18 },
-			cfg
-		);
-		expect(r.points).toBe(0);
-		expect(r.nearMargin).toBe(false);
-	});
-
-	it('ne transforme pas un match nul en « rate d\'un point »', () => {
-		// Ecart 1 : hors liste desormais, mais un pronostic d'avant la liste
-		// fermee peut le porter. Le nul reste le nul, pas une quasi-reussite.
-		const r = computeScore(
-			{ mode: 'margin', pickSide: 'home', marginPred: 1 },
-			GAME,
-			{ scoreHome: 20, scoreAway: 20 },
-			cfg
-		);
-		expect(r.bonusKind).toBe('draw');
-		expect(r.nearMargin).toBe(false);
-	});
-
-	it('suit le reglage : a 0, le bonus de proximite disparait', () => {
-		const r = computeScore(PICK, GAME, { scoreHome: 25, scoreAway: 18 }, {
-			...cfg,
-			nearMarginFactor: 0
-		});
-		expect(r.points).toBe(31);
-		expect(r.bonusPoints).toBe(0);
+	/**
+	 * Consequence assumee de la formule : le bonus depend de l'ecart **annonce**,
+	 * pas de l'ecart reel. Viser une valeur rare et la rater d'un point peut donc
+	 * rapporter plus que toucher pile une valeur banale.
+	 *
+	 * Ce test ne juge pas la regle, il la fixe : si elle change un jour, c'est
+	 * ici que ca se verra.
+	 */
+	it("peut payer davantage un ecart rare rate d'un point qu'un ecart banal exact", () => {
+		const reel = 3;
+		const exact = bonusEcart(3, reel, cfg); // pile sur l'ecart le plus courant
+		const voisin = bonusEcart(2, reel, cfg); // rate d'un point, mais plus rare
+		expect(voisin).toBeGreaterThan(exact);
 	});
 });
 
-describe('ecart predit et enjeu, quel que soit le mode', () => {
-	it('derive un ecart signe des deux modes', () => {
-		expect(predictedDiff({ pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 20 })).toBe(7);
-		expect(predictedDiff({ pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 27 })).toBe(-7);
-		expect(predictedDiff({ mode: 'margin', pickSide: 'home', marginPred: 7 })).toBe(7);
-		expect(predictedDiff({ mode: 'margin', pickSide: 'away', marginPred: 7 })).toBe(-7);
-		expect(predictedDiff({ mode: 'margin', pickSide: null, marginPred: 0 })).toBe(0);
+describe('ecart predit et enjeu', () => {
+	it('derive un ecart signe de l’equipe et de l’ecart annonce', () => {
+		expect(predictedDiff({ pickSide: 'home', marginPred: 7 })).toBe(7);
+		expect(predictedDiff({ pickSide: 'away', marginPred: 7 })).toBe(-7);
+		expect(predictedDiff({ pickSide: null, marginPred: 0 })).toBe(0);
 	});
 
 	it('prend la moyenne des baremes quand aucune equipe n\'est designee', () => {
@@ -450,47 +364,22 @@ describe('ecart predit et enjeu, quel que soit le mode', () => {
 	});
 
 	it('lit une ligne de base sans inventer de valeurs', () => {
-		expect(
-			pickInputFromRow({
-				mode: 'score',
-				pickSide: 'home',
-				scoreHomePred: 27,
-				scoreAwayPred: 20,
-				marginPred: null
-			})
-		).toEqual({ mode: 'score', pickSide: 'home', scoreHomePred: 27, scoreAwayPred: 20 });
-
-		expect(
-			pickInputFromRow({
-				mode: 'margin',
-				pickSide: 'away',
-				scoreHomePred: null,
-				scoreAwayPred: null,
-				marginPred: 3
-			})
-		).toEqual({ mode: 'margin', pickSide: 'away', marginPred: 3 });
+		expect(pickInputFromRow({ pickSide: 'away', marginPred: 3 })).toEqual({
+			pickSide: 'away',
+			marginPred: 3
+		});
 
 		// Ecart 0 : l'equipe est ignoree, un nul predit n'en designe aucune.
-		expect(
-			pickInputFromRow({
-				mode: 'margin',
-				pickSide: 'home',
-				scoreHomePred: null,
-				scoreAwayPred: null,
-				marginPred: 0
-			})
-		).toEqual({ mode: 'margin', pickSide: null, marginPred: 0 });
+		expect(pickInputFromRow({ pickSide: 'home', marginPred: 0 })).toEqual({
+			pickSide: null,
+			marginPred: 0
+		});
 
-		// Une ligne d'avant les deux modes n'a pas de `mode` : c'est un score.
-		expect(
-			pickInputFromRow({
-				mode: null,
-				pickSide: 'away',
-				scoreHomePred: 20,
-				scoreAwayPred: 24,
-				marginPred: null
-			})
-		).toEqual({ mode: 'score', pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 24 });
+		// Ecart absent : on retombe sur 0 plutot que sur NaN.
+		expect(pickInputFromRow({ pickSide: 'home', marginPred: null })).toEqual({
+			pickSide: null,
+			marginPred: 0
+		});
 	});
 });
 
@@ -513,59 +402,50 @@ describe('playoffs', () => {
 	});
 
 	it('multiplie les points du match', () => {
+		// Annonce +12 sur un match qui finit +4 : aucun bonus, donc la base seule,
+		// ce qui isole bien l'effet du multiplicateur.
 		const r = computeScore(
-			{ pickSide: 'home', scoreHomePred: 30, scoreAwayPred: 10 },
+			{ pickSide: 'home', marginPred: 12 },
 			{ ...GAME, multiplier: 2 },
 			{ scoreHome: 24, scoreAway: 20 },
 			withPlayoffs
 		);
-		expect(r.points).toBe(62);
+		expect(r.points).toBe(62); // 31 x 1 x 2
 	});
 });
 
 describe('coherence du pronostic', () => {
-	it('accepte un score conforme au choix', () => {
-		expect(isPickConsistent({ pickSide: 'home', scoreHomePred: 24, scoreAwayPred: 20 })).toBe(true);
-		expect(isPickConsistent({ pickSide: 'away', scoreHomePred: 20, scoreAwayPred: 24 })).toBe(true);
+	it('tout ecart strictement positif designe une equipe', () => {
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 3 })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'away', marginPred: 21 })).toBe(true);
+		expect(isPickConsistent({ pickSide: null, marginPred: 6 })).toBe(false);
 	});
 
-	it('accepte un nul quelle que soit l’equipe choisie', () => {
-		expect(isPickConsistent({ pickSide: 'home', scoreHomePred: 20, scoreAwayPred: 20 })).toBe(true);
+	it('accepte les valeurs libres, refuse au-dela de la borne', () => {
+		// La liste fermee de huit splits a disparu avec le bonus de rarete :
+		// chaque valeur ayant son propre bareme, il n'y a plus a en interdire.
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 7 })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 1 })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 27 })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: MARGIN_MAX })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: MARGIN_MAX + 1 })).toBe(false);
 	});
 
-	it('refuse un score qui contredit le choix', () => {
-		expect(isPickConsistent({ pickSide: 'home', scoreHomePred: 17, scoreAwayPred: 24 })).toBe(false);
+	it('un ecart de 0 (nul predit) ne designe aucune equipe', () => {
+		expect(isPickConsistent({ pickSide: null, marginPred: 0 })).toBe(true);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 0 })).toBe(false);
 	});
 
-	it('mode split : un split de la liste designe une equipe', () => {
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 3 })).toBe(true);
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'away', marginPred: 21 })).toBe(true);
-		expect(isPickConsistent({ mode: 'margin', pickSide: null, marginPred: 6 })).toBe(false);
-	});
-
-	it('mode split : refuse un ecart hors de la liste', () => {
-		// C'etait valide avant la liste fermee : la saisie les refuse desormais,
-		// et le calcul continue de les honorer (cf. « bonus de proximite »).
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 7 })).toBe(false);
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 1 })).toBe(false);
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 27 })).toBe(false);
-	});
-
-	it('mode split : un ecart de 0 (nul predit) ne designe aucune equipe', () => {
-		expect(isPickConsistent({ mode: 'margin', pickSide: null, marginPred: 0 })).toBe(true);
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 0 })).toBe(false);
-	});
-
-	it('mode split : refuse un ecart negatif ou fractionnaire', () => {
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: -3 })).toBe(false);
-		expect(isPickConsistent({ mode: 'margin', pickSide: 'home', marginPred: 3.5 })).toBe(false);
+	it('refuse un ecart negatif ou fractionnaire', () => {
+		expect(isPickConsistent({ pickSide: 'home', marginPred: -3 })).toBe(false);
+		expect(isPickConsistent({ pickSide: 'home', marginPred: 3.5 })).toBe(false);
 	});
 });
 
 describe('idempotence du calcul', () => {
 	it('deux appels identiques donnent le meme resultat', () => {
 		const args = [
-			{ pickSide: 'away' as const, scoreHomePred: 20, scoreAwayPred: 24 },
+			{ pickSide: 'away' as const, marginPred: 4 },
 			GAME,
 			{ scoreHome: 20, scoreAway: 24 },
 			cfg

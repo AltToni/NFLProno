@@ -1,6 +1,7 @@
 import { db } from './db';
 import { settings } from './db/schema';
 import { now } from '$lib/time';
+import { ECARTS } from '$lib/scoring';
 
 /**
  * Toutes les constantes du bareme vivent en base et sont modifiables par
@@ -31,28 +32,36 @@ export const SETTING_DEFS = {
 		max: 2000,
 		step: 1
 	},
-	'scoring.margin_bonus_pct': {
-		value: 0.5,
-		label: "Bonus ecart exact (fraction des points de base)",
-		group: 'Bareme',
+	'bonus.k': {
+		value: ECARTS.k,
+		label: 'Numerateur du bonus de rarete (bonus = k / f(ecart))',
+		group: 'Bonus de rarete',
+		min: 0.001,
+		max: 1,
+		step: 0.000001
+	},
+	'bonus.plancher': {
+		value: ECARTS.plancher,
+		label: 'Bonus minimal, meme sur l’ecart le plus banal',
+		group: 'Bonus de rarete',
 		min: 0,
 		max: 5,
 		step: 0.05
 	},
-	'scoring.near_margin_factor': {
-		value: 0.75,
-		label: 'Part du bonus si le split est rate d’un point (mode split)',
-		group: 'Bareme',
+	'bonus.plafond': {
+		value: ECARTS.plafond,
+		label: 'Bonus maximal, meme sur l’ecart le plus rare',
+		group: 'Bonus de rarete',
+		min: 0,
+		max: 10,
+		step: 0.05
+	},
+	'bonus.pas': {
+		value: 0.25,
+		label: 'Bonus perdu par point d’erreur sur l’ecart',
+		group: 'Bonus de rarete',
 		min: 0,
 		max: 1,
-		step: 0.05
-	},
-	'scoring.exact_bonus_pct': {
-		value: 1,
-		label: 'Bonus score exact (fraction des points de base)',
-		group: 'Bareme',
-		min: 0,
-		max: 5,
 		step: 0.05
 	},
 	'scoring.draw_factor': {
@@ -177,9 +186,10 @@ export function getScoringConfig() {
 		k: getSetting('scoring.k'),
 		baseMin: getSetting('scoring.base_min'),
 		baseMax: getSetting('scoring.base_max'),
-		marginBonusPct: getSetting('scoring.margin_bonus_pct'),
-		nearMarginFactor: getSetting('scoring.near_margin_factor'),
-		exactBonusPct: getSetting('scoring.exact_bonus_pct'),
+		bonusK: getSetting('bonus.k'),
+		bonusPlancher: getSetting('bonus.plancher'),
+		bonusPlafond: getSetting('bonus.plafond'),
+		bonusPas: getSetting('bonus.pas'),
 		drawFactor: getSetting('scoring.draw_factor'),
 		fallbackP: getSetting('scoring.fallback_p'),
 		playoffsEnabled: getSetting('playoffs.enabled') === 1,

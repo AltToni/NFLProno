@@ -760,46 +760,53 @@ tr.me td {
 	min-width: 3rem;
 }
 
-.score-inputs {
-	display: grid;
-	grid-template-columns: 1fr auto 1fr;
+/*
+ * Saisie de l'ecart : « Match nul », un champ libre avec le bonus annonce a
+ * cote, et des raccourcis vers les ecarts les plus courants.
+ */
+.ecart {
+	display: flex;
+	flex-direction: column;
 	gap: 0.5rem;
-	align-items: center;
 	margin-top: 0.6rem;
 }
 
-/* Bascule « Vainqueur + split » / « Score », un choix par match. */
-.modes {
+.ecart__saisie {
 	display: flex;
-	gap: 0.3rem;
-	margin-bottom: 0.8rem;
-	background: var(--bg-2);
-	padding: 0.25rem;
-	border-radius: 999px;
-	border: 1px solid var(--border);
+	flex-direction: column;
+	gap: 0.25rem;
 }
-.modes .tab {
-	flex: 1;
-	text-align: center;
-	border-color: transparent;
-	background: transparent;
-}
-.modes .tab--active {
-	background: var(--accent);
-	border-color: var(--accent);
+
+.ecart__courants {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(3.2rem, 1fr));
+	gap: 0.35rem;
 }
 
 /*
- * Les huit splits jouables, plus « Match nul ». Grille auto-fit plutot qu'un
- * nombre de colonnes fixe : sur un telephone etroit les boutons se replient
- * seuls, sans point de rupture a maintenir.
+ * Le bonus annonce. Vert parce que ce sont des points, et assez gros pour se
+ * lire pendant qu'on tape : c'est lui qui transforme le choix d'un ecart en
+ * arbitrage plutot qu'en devinette.
  */
-.splits {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(3.6rem, 1fr));
+.bonus {
+	display: flex;
+	align-items: baseline;
 	gap: 0.35rem;
-	margin-top: 0.6rem;
+	color: var(--positive);
+	font-variant-numeric: tabular-nums;
 }
+.bonus strong {
+	font-size: 1.15rem;
+	font-family: var(--font-display);
+	letter-spacing: -0.02em;
+}
+.bonus .tiny {
+	color: var(--muted);
+}
+.bonus--vide {
+	color: var(--muted);
+}
+
 .split {
 	padding: 0.55rem 0.3rem;
 	border-radius: var(--radius-sm);
@@ -826,6 +833,12 @@ tr.me td {
 .split--nul {
 	grid-column: 1 / -1;
 	font-weight: 500;
+}
+
+/* Raccourcis d'ecarts courants : plus discrets que la saisie elle-meme. */
+.split--sm {
+	padding: 0.35rem 0.3rem;
+	font-size: 0.85rem;
 }
 
 .game--error {

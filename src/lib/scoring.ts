@@ -4,16 +4,21 @@
  * reference unique pour le calcul comme pour l'affichage des enjeux.
  */
 
+import TABLE_ECARTS from './ecarts-nfl.json';
+
 export interface ScoringConfig {
 	k: number;
 	baseMin: number;
 	baseMax: number;
-	marginBonusPct: number;
-	/** Part du bonus d'ecart accordee a un split rate d'un point (mode split). */
-	nearMarginFactor: number;
-	exactBonusPct: number;
 	drawFactor: number;
 	fallbackP: number;
+	/** Numerateur du bonus de rarete : bonus = bonusK / f(ecart). */
+	bonusK: number;
+	/** Bornes du bonus de rarete, en fraction des points de base. */
+	bonusPlancher: number;
+	bonusPlafond: number;
+	/** Perte de bonus par point d'erreur sur l'ecart. */
+	bonusPas: number;
 	playoffsEnabled: boolean;
 	playoffMultipliers: Record<number, number>;
 }
@@ -22,36 +27,93 @@ export const DEFAULT_SCORING: ScoringConfig = {
 	k: 25,
 	baseMin: 25,
 	baseMax: 250,
-	marginBonusPct: 0.5,
-	nearMarginFactor: 0.75,
-	exactBonusPct: 1,
 	drawFactor: 0.5,
 	fallbackP: 0.5,
+	bonusK: TABLE_ECARTS.k,
+	bonusPlancher: TABLE_ECARTS.plancher,
+	bonusPlafond: TABLE_ECARTS.plafond,
+	bonusPas: 0.25,
 	playoffsEnabled: false,
 	playoffMultipliers: { 1: 1.5, 2: 2, 3: 2.5, 4: 1, 5: 3 }
 };
 
-/**
- * Les seuls splits jouables. L'espacement de 3 points n'est pas cosmetique : il
- * fait qu'un ecart reel donne est a distance 0 ou 1 d'**exactement un** split,
- * jamais de deux, jamais d'aucun (entre 2 et 25). Il y a donc toujours un seul
- * bon choix, et les fourchettes de proximite ne se recouvrent pas.
- *
- *   reel +6  ->  « +6 » exact,          les autres a 3 ou plus  -> bonus plein
- *   reel +7  ->  « +6 » a un point,     « +9 » a deux           -> 3/4 du bonus
- *   reel +8  ->  « +9 » a un point,     « +6 » a deux           -> 3/4 du bonus
- *
- * Corollaire : un ecart reel de 1 point (21-20) ne rapporte aucun bonus en mode
- * split, le premier choix etant a 2 points de la.
- */
-export const SPLIT_CHOICES = [3, 6, 9, 12, 15, 18, 21, 24] as const;
+// ---------------------------------------------------------------------------
+// Rarete des ecarts
+// ---------------------------------------------------------------------------
 
-/** Ecart d'un nul predit : la seule valeur hors liste acceptee en mode split. */
+/**
+ * Frequence historique de chaque ecart, produite par
+ * `scripts/analyse-ecarts.ts` sur 2015-2025 et **figee dans le depot**.
+ *
+ * Elle n'est pas recalculee en cours de saison : un bareme qui bouge sous les
+ * joueurs n'est plus un bareme. La regenerer est un geste explicite, qui
+ * demande de relancer le script et de commiter la table.
+ */
+export const ECARTS = TABLE_ECARTS;
+
+/** Dernier seau de la table : « `ecartMax` ou plus ». */
+export const ECART_MAX = TABLE_ECARTS.ecartMax;
+
+/**
+ * Frequence de l'ecart `m`. Tout ce qui depasse la table retombe sur son
+ * dernier seau : au-dela, chaque valeur prise isolement est trop rare pour
+ * porter une frequence propre, et un ecart de 34 points n'est pas plus
+ * previsible qu'un de 31.
+ */
+export function frequenceEcart(m: number): number {
+	if (!Number.isFinite(m) || m < 0) return TABLE_ECARTS.frequences[ECART_MAX];
+	return TABLE_ECARTS.frequences[Math.min(Math.round(m), ECART_MAX)];
+}
+
+/**
+ * Bonus obtenu si l'ecart annonce tombe **pile**, en fraction des points de
+ * base : `clamp(k / f(m), plancher, plafond)`.
+ *
+ * Autrement dit : plus l'ecart vise est improbable, plus il rapporte. Un
+ * match gagne de 3 points est le resultat le plus courant du football
+ * americain (un panier de la victoire) et ne vaut presque rien ; un nul, dix
+ * fois sur 2895 matchs, vaut le plafond.
+ *
+ * `k` est calibre par le script pour que le bonus **moyen**, pondere par la
+ * frequence reelle des ecarts, vaille 100 % : le bareme redistribue, il
+ * n'inflate pas.
+ */
+export function bonusEcartExact(m: number, cfg: ScoringConfig = DEFAULT_SCORING): number {
+	const f = frequenceEcart(m);
+	if (!(f > 0)) return cfg.bonusPlafond;
+	return Math.min(cfg.bonusPlafond, Math.max(cfg.bonusPlancher, cfg.bonusK / f));
+}
+
+/**
+ * Part du bonus conservee quand l'ecart est rate : 1 a l'exact, puis `pas` de
+ * moins par point d'erreur, plancher a 0. Avec le pas par defaut de 0,25, un
+ * ecart rate de 4 points ou plus ne rapporte plus rien.
+ */
+export function attenuationEcart(erreur: number, cfg: ScoringConfig = DEFAULT_SCORING): number {
+	return Math.max(0, 1 - cfg.bonusPas * Math.abs(erreur));
+}
+
+/** Bonus effectivement accorde, rarete et erreur combinees. */
+export function bonusEcart(
+	mPredit: number,
+	mReel: number,
+	cfg: ScoringConfig = DEFAULT_SCORING
+): number {
+	return bonusEcartExact(mPredit, cfg) * attenuationEcart(mPredit - mReel, cfg);
+}
+
+/**
+ * Ecarts les plus frequents, proposes en raccourci a la saisie. Ce ne sont
+ * plus des choix imposes — n'importe quel entier est jouable — seulement les
+ * boutons qui evitent de taper les cas courants.
+ */
+export const ECARTS_COURANTS = [3, 7, 6, 10, 14, 4] as const;
+
+/** Ecart d'un nul predit : aucune equipe n'est designee. */
 export const DRAW_MARGIN = 0;
 
-export function isSplitChoice(margin: number): boolean {
-	return (SPLIT_CHOICES as readonly number[]).includes(margin);
-}
+/** Borne haute de saisie : au-dela, c'est une faute de frappe. */
+export const MARGIN_MAX = 60;
 
 /**
  * Moneyline americaine -> probabilite brute (marge du bookmaker incluse).
@@ -95,63 +157,30 @@ export function playoffMultiplier(
 }
 
 export type PickSide = 'home' | 'away';
-export type BonusKind = 'none' | 'margin' | 'near' | 'exact' | 'draw';
+export type BonusKind = 'none' | 'margin' | 'near' | 'draw';
 
 /**
- * Deux facons de saisir un pronostic, au choix du joueur match par match :
+ * Un pronostic : une equipe et l'ecart annonce.
  *
- *  - `'score'`  : les deux scores predits. Le vainqueur et l'ecart s'en
- *    deduisent, et c'est le seul mode eligible au bonus de score exact (x2).
- *  - `'margin'` : vainqueur + ecart de points (>= 1), ou match nul (ecart 0,
- *    aucune equipe designee). Aucun score n'est predit, donc le x2 est hors
- *    d'atteinte par construction.
+ * `pickSide` est nul si et seulement si `marginPred` vaut 0 — un nul predit ne
+ * designe aucune equipe.
  */
-export type PickMode = 'score' | 'margin';
-
-/**
- * `pickSide` reste nullable dans les deux modes : le schema l'autorise depuis
- * l'arrivee du nul predit sans equipe (mode `'margin'`, ecart 0). Un pronostic
- * en mode `'score'` sans equipe est refuse a l'ecriture (`savePick`) ; s'il en
- * arrivait un ici, il vaudrait 0 des que le match a un vainqueur.
- */
-export interface ScorePick {
-	mode?: 'score';
+export interface PickInput {
 	pickSide: PickSide | null;
-	scoreHomePred: number;
-	scoreAwayPred: number;
-}
-
-export interface MarginPick {
-	mode: 'margin';
-	/** null si et seulement si `marginPred` vaut 0 (nul predit). */
-	pickSide: PickSide | null;
-	/**
-	 * Split predit : une valeur de `SPLIT_CHOICES` avec une equipe, 0 pour un
-	 * nul. Les pronostics anterieurs a la liste fermee peuvent porter n'importe
-	 * quel entier ; le calcul ci-dessous les traite sans cas particulier.
-	 */
+	/** Ecart annonce, entier de 0 (nul) a `MARGIN_MAX`. */
 	marginPred: number;
 }
 
-export type PickInput = ScorePick | MarginPick;
-
-/**
- * Ecart signe predit — positif = victoire des locaux — quel que soit le mode
- * de saisie. C'est la grandeur commune aux deux modes, et donc le pivot du
- * calcul : le bonus d'ecart se lit pareil de part et d'autre.
- */
+/** Ecart signe predit — positif = victoire des locaux. */
 export function predictedDiff(pick: PickInput): number {
-	if (pick.mode === 'margin') {
-		if (pick.pickSide === null) return 0;
-		return pick.pickSide === 'home' ? pick.marginPred : -pick.marginPred;
-	}
-	return pick.scoreHomePred - pick.scoreAwayPred;
+	if (pick.pickSide === null) return 0;
+	return pick.pickSide === 'home' ? pick.marginPred : -pick.marginPred;
 }
 
 /**
- * Points de base en jeu pour un camp. Un nul predit en mode `'margin'` ne
- * designe aucune equipe : le bareme retenu est alors la moyenne des deux, seule
- * valeur neutre disponible (cf. README section 4, interpretation 3).
+ * Points de base en jeu pour un camp. Un nul predit ne designe aucune equipe :
+ * le bareme retenu est alors la moyenne des deux, seule valeur neutre
+ * disponible (cf. README section 4, interpretation 2).
  */
 export function stakePoints(side: PickSide | null, game: GameBase): number {
 	if (side === 'home') return game.basePointsHome;
@@ -178,9 +207,8 @@ export interface ScoreBreakdown {
 	bonusKind: BonusKind;
 	multiplier: number;
 	correct: boolean;
-	exactScore: boolean;
 	exactMargin: boolean;
-	/** Split rate d'un point, bonus partiel obtenu. Exclusif de `exactMargin`. */
+	/** Ecart rate de peu, bonus partiel obtenu. Exclusif de `exactMargin`. */
 	nearMargin: boolean;
 }
 
@@ -191,7 +219,6 @@ const ZERO = (multiplier: number): ScoreBreakdown => ({
 	bonusKind: 'none',
 	multiplier,
 	correct: false,
-	exactScore: false,
 	exactMargin: false,
 	nearMargin: false
 });
@@ -199,23 +226,14 @@ const ZERO = (multiplier: number): ScoreBreakdown => ({
 /**
  * Points rapportes par un pronostic sur un match termine.
  *
- * - vainqueur correct        : base
- * - + ecart exact            : +marginBonusPct x base
- * - + split rate d'un point  : +marginBonusPct x nearMarginFactor x base
- *                              (mode `'margin'` uniquement, cf. ci-dessous)
- * - + score exact            : +exactBonusPct x base (remplace le bonus d'ecart)
- * - vainqueur incorrect      : 0 (jamais de points negatifs)
- * - match nul                : drawFactor x base de l'equipe choisie,
- *                              ou base + bonus si le joueur avait predit le nul
+ * - vainqueur correct  : base x (1 + bonus de rarete attenue par l'erreur)
+ * - vainqueur incorrect: 0 (jamais de points negatifs)
+ * - match nul          : drawFactor x base de l'equipe choisie, ou base et son
+ *                        bonus plein si le nul avait ete predit
  *
- * Les deux modes de saisie partagent ce calcul : seul l'ecart signe predit
- * change de source, et le mode `'margin'` n'ayant pas de score predit, il
- * n'atteint jamais le bonus de score exact.
- *
- * Le bonus de proximite, lui, est **reserve au mode split** : c'est la
- * contrepartie de sa liste fermee de huit valeurs, ou viser plus juste est
- * impossible. Le mode score, qui peut annoncer n'importe quel ecart, garde la
- * regle stricte — ecart exact ou rien.
+ * Le bonus paie l'improbabilite de l'ecart annonce, pas seulement sa justesse :
+ * viser juste sur un resultat banal rapporte peu, viser juste sur un resultat
+ * rare rapporte beaucoup. Voir `bonusEcartExact`.
  */
 export function computeScore(
 	pick: PickInput,
@@ -228,20 +246,14 @@ export function computeScore(
 
 	const predDiff = predictedDiff(pick);
 	const realDiff = outcome.scoreHome - outcome.scoreAway;
-	const exactScore =
-		pick.mode !== 'margin' &&
-		pick.scoreHomePred === outcome.scoreHome &&
-		pick.scoreAwayPred === outcome.scoreAway;
 	const exactMargin = predDiff === realDiff;
-	// `realDiff !== 0` : sur un match nul, un split annonce n'est pas « rate de
-	// peu », c'est le mauvais resultat — la branche du nul ci-dessous s'en
-	// charge. La condition n'a d'effet que sur des splits hors liste (1 ou 2),
-	// hors d'atteinte depuis la liste fermee mais possibles en base.
-	const nearMargin =
-		pick.mode === 'margin' &&
-		!exactMargin &&
-		realDiff !== 0 &&
-		Math.abs(realDiff - predDiff) === 1;
+
+	/**
+	 * Les deux grandeurs sont des **ecarts absolus** : le vainqueur ayant deja
+	 * ete verifie, `predDiff` et `realDiff` sont de meme signe, et c'est bien
+	 * l'ecart annonce qui est note.
+	 */
+	const bonusRarete = (): number => bonusEcart(Math.abs(predDiff), Math.abs(realDiff), cfg);
 
 	let factor: number;
 	let bonusKind: BonusKind;
@@ -250,9 +262,12 @@ export function computeScore(
 	if (realDiff === 0) {
 		// Match nul : cas particulier de la spec 2.4.
 		if (predDiff === 0) {
+			// Le nul est l'issue la plus rare du football americain : il touche
+			// le bonus le plus eleve de la table, par le meme mecanisme que
+			// n'importe quel autre ecart.
 			correct = true;
-			bonusKind = exactScore ? 'exact' : 'margin';
-			factor = 1 + (exactScore ? cfg.exactBonusPct : cfg.marginBonusPct);
+			bonusKind = 'margin';
+			factor = 1 + bonusRarete();
 		} else {
 			correct = false;
 			bonusKind = 'draw';
@@ -260,23 +275,14 @@ export function computeScore(
 		}
 	} else {
 		const winner: PickSide = realDiff > 0 ? 'home' : 'away';
-		// `pickSide` null (nul predit en mode « ecart ») tombe ici aussi : sans
-		// equipe designee, un match avec vainqueur ne rapporte rien.
+		// `pickSide` null (nul predit) tombe ici aussi : sans equipe designee, un
+		// match avec vainqueur ne rapporte rien.
 		if (pick.pickSide !== winner) return ZERO(multiplier);
+
 		correct = true;
-		if (exactScore) {
-			bonusKind = 'exact';
-			factor = 1 + cfg.exactBonusPct;
-		} else if (exactMargin) {
-			bonusKind = 'margin';
-			factor = 1 + cfg.marginBonusPct;
-		} else if (nearMargin) {
-			bonusKind = 'near';
-			factor = 1 + cfg.marginBonusPct * cfg.nearMarginFactor;
-		} else {
-			bonusKind = 'none';
-			factor = 1;
-		}
+		const bonus = bonusRarete();
+		factor = 1 + bonus;
+		bonusKind = exactMargin ? 'margin' : bonus > 0 ? 'near' : 'none';
 	}
 
 	const points = Math.round(base * factor * multiplier);
@@ -289,7 +295,6 @@ export function computeScore(
 		bonusKind,
 		multiplier,
 		correct,
-		exactScore: exactScore && realDiff === predDiff,
 		exactMargin,
 		nearMargin: bonusKind === 'near'
 	};
@@ -343,52 +348,33 @@ export function stakesFromMoneylines(
 }
 
 /**
- * Un pronostic doit rester coherent, dans un mode comme dans l'autre :
+ * Un pronostic coherent : un ecart strictement positif designe une equipe, un
+ * ecart de 0 (nul predit) n'en designe aucune.
  *
- *  - mode `'score'`  : le score predit ne peut pas donner la victoire a
- *    l'equipe qui n'a pas ete choisie. Le nul reste autorise (spec 2.4).
- *  - mode `'margin'` : un split de `SPLIT_CHOICES` designe une equipe, un ecart
- *    de 0 (nul predit) n'en designe aucune, et rien d'autre n'est jouable.
+ * L'ecart est un entier libre entre 0 et `MARGIN_MAX`. Le bonus de rarete
+ * donnant a chaque valeur son propre bareme, il n'y a rien a restreindre de
+ * plus : c'est au joueur d'arbitrer entre la probabilite d'un ecart et ce
+ * qu'il rapporte.
  *
  * Regle de reference, partagee par le controle serveur (`savePick`, qui affine
  * seulement le message d'erreur) et par l'interface.
- *
- * Ne s'applique qu'a la **saisie**. Les pronostics deja en base portant un ecart
- * libre (avant la liste fermee) restent parfaitement calculables : `computeScore`
- * ne consulte jamais cette fonction.
  */
 export function isPickConsistent(pick: PickInput): boolean {
-	if (pick.mode === 'margin') {
-		if (!Number.isInteger(pick.marginPred) || pick.marginPred < 0) return false;
-		if (pick.marginPred === DRAW_MARGIN) return pick.pickSide === null;
-		return pick.pickSide !== null && isSplitChoice(pick.marginPred);
-	}
-	const diff = pick.scoreHomePred - pick.scoreAwayPred;
-	if (diff === 0) return true;
-	return diff > 0 ? pick.pickSide === 'home' : pick.pickSide === 'away';
+	if (!Number.isInteger(pick.marginPred) || pick.marginPred < 0) return false;
+	if (pick.marginPred > MARGIN_MAX) return false;
+	if (pick.marginPred === DRAW_MARGIN) return pick.pickSide === null;
+	return pick.pickSide !== null;
 }
 
 /**
  * Ligne `picks` (ou toute forme equivalente) vers une entree de calcul. Le
- * schema autorise des colonnes vides — les scores en mode « ecart », l'ecart en
- * mode « score » — et c'est ici, en un seul endroit, qu'on retombe sur des
- * valeurs sures plutot que dans chaque appelant.
+ * schema autorise un ecart vide ; c'est ici, en un seul endroit, qu'on retombe
+ * sur une valeur sure plutot que dans chaque appelant.
  */
 export function pickInputFromRow(row: {
-	mode: string | null;
 	pickSide: PickSide | null;
-	scoreHomePred: number | null;
-	scoreAwayPred: number | null;
 	marginPred: number | null;
 }): PickInput {
-	if (row.mode === 'margin') {
-		const marginPred = row.marginPred ?? 0;
-		return { mode: 'margin', pickSide: marginPred === 0 ? null : row.pickSide, marginPred };
-	}
-	return {
-		mode: 'score',
-		pickSide: row.pickSide,
-		scoreHomePred: row.scoreHomePred ?? 0,
-		scoreAwayPred: row.scoreAwayPred ?? 0
-	};
+	const marginPred = row.marginPred ?? 0;
+	return { pickSide: marginPred === 0 ? null : row.pickSide, marginPred };
 }
