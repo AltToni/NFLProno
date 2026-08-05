@@ -2,23 +2,34 @@
 	import type { BoardGame, EtatCarte } from '$lib/types';
 	import LocalTime from './LocalTime.svelte';
 	import Countdown from './Countdown.svelte';
-	import { GAME_STATUS_LABEL, marginLabel, pickLabel } from '$lib/nfl';
-	import { SPLIT_CHOICES, type PickMode, type PickSide } from '$lib/scoring';
+	import { bonusApplique, GAME_STATUS_LABEL, marginLabel, pickLabel } from '$lib/nfl';
+	import {
+		bonusEcartExact,
+		DEFAULT_SCORING,
+		ECARTS_COURANTS,
+		MARGIN_MAX,
+		type PickMode,
+		type PickSide,
+		type ScoringConfig
+	} from '$lib/scoring';
 
 	let {
 		game,
 		error = null,
-		report
+		report,
+		bareme = DEFAULT_SCORING
 	}: {
 		game: BoardGame;
 		error?: string | null;
 		report?: (etat: EtatCarte) => void;
+		/** Bareme courant : il decide du bonus annonce sous la saisie. */
+		bareme?: ScoringConfig;
 	} = $props();
 
-	/** Le mode par defaut du jeu : vainqueur + split. */
+	/** Le mode par defaut du jeu : vainqueur + ecart. */
 	let mode = $state<PickMode>('margin');
 	let side = $state<PickSide | null>(null);
-	/** Mode split : « Match nul » = ecart 0 et aucune equipe designee. */
+	/** Mode ecart : « Match nul » = ecart 0 et aucune equipe designee. */
 	let nul = $state(false);
 	let margin = $state<number | null>(null);
 	let homeScore = $state<number | null>(null);
@@ -61,16 +72,9 @@
 		side = derivedDiff > 0 ? 'home' : 'away';
 	});
 
-	/**
-	 * Un split hors liste : un pronostic d'avant la liste fermee, ou repris d'une
-	 * saisie libre. Il reste valable et se calcule normalement, mais il faut le
-	 * rejouer pour pouvoir reenregistrer la carte.
-	 */
-	const splitHorsListe = $derived(
-		mode === 'margin' &&
-			!nul &&
-			margin !== null &&
-			!(SPLIT_CHOICES as readonly number[]).includes(margin)
+	/** Ecart hors bornes : refuse a l'enregistrement, signale avant l'envoi. */
+	const ecartHorsBornes = $derived(
+		mode === 'margin' && !nul && margin !== null && (margin < 1 || margin > MARGIN_MAX)
 	);
 
 	const vide = $derived(
@@ -81,9 +85,30 @@
 
 	const complet = $derived(
 		mode === 'margin'
-			? nul || (side !== null && margin !== null && !splitHorsListe)
+			? nul || (side !== null && margin !== null && !ecartHorsBornes)
 			: side !== null && homeScore !== null && awayScore !== null
 	);
+
+	/**
+	 * Bonus que rapporterait l'ecart annonce s'il tombait pile. Recalcule a
+	 * chaque frappe : c'est l'information qui rend le choix interessant, et elle
+	 * doit bouger sous les doigts du joueur.
+	 */
+	const bonusAnnonce = $derived.by(() => {
+		if (mode !== 'margin') return null;
+		if (nul) return bonusEcartExact(0, bareme);
+		if (margin === null || ecartHorsBornes) return null;
+		return bonusEcartExact(margin, bareme);
+	});
+
+	const pct = (x: number) => `+${Math.round(x * 100)} %`;
+
+	/**
+	 * Bonus reellement obtenu, une fois le match compte. Il vient des points
+	 * stockes, pas d'un recalcul : c'est la seule facon d'etre toujours d'accord
+	 * avec le total affiche a cote.
+	 */
+	const bonusObtenu = $derived(bonusApplique(game.basePoints, game.bonusPoints));
 
 	/**
 	 * Ecart signe du pronostic en cours de saisie, ou null s'il n'en dit pas
@@ -132,12 +157,30 @@
 		}
 	}
 
+	/** Raccourci d'un ecart courant. Le rejouer le retire. */
 	function chooseSplit(valeur: number) {
 		if (!editable) return;
+		const memeValeur = margin === valeur && !nul;
 		nul = false;
-		// Rejouer le split deja retenu le retire : c'est le seul moyen de revenir
-		// a une carte vierge sans recharger la page.
-		margin = margin === valeur && !nul ? null : valeur;
+		margin = memeValeur ? null : valeur;
+	}
+
+	/**
+	 * Saisie libre de l'ecart. Un champ vide remet la carte a blanc plutot que
+	 * de figer un 0, qui voudrait dire « match nul » — ce que le joueur n'a pas
+	 * demande en effacant.
+	 */
+	function saisirEcart(brut: string) {
+		if (!editable) return;
+		const propre = brut.trim();
+		if (propre === '') {
+			margin = null;
+			return;
+		}
+		const n = Number(propre);
+		if (!Number.isInteger(n)) return;
+		nul = false;
+		margin = n;
 	}
 
 	function chooseNul() {
@@ -150,9 +193,9 @@
 	}
 
 	/**
-	 * Bascule de mode. Passer au mode split reprend ce que le score saisi disait
-	 * deja, a condition que l'ecart corresponde a un split jouable — l'inverse
-	 * est impossible, un split ne contient aucun score.
+	 * Bascule de mode. Passer au mode ecart reprend ce que le score saisi disait
+	 * deja : tout ecart etant jouable, la reprise est toujours fidele. L'inverse
+	 * est impossible, un ecart annonce ne contient aucun score.
 	 */
 	function switchMode(next: PickMode) {
 		if (!editable || mode === next) return;
@@ -160,8 +203,9 @@
 			if (derivedDiff === 0) {
 				nul = true;
 				side = null;
-			} else if ((SPLIT_CHOICES as readonly number[]).includes(Math.abs(derivedDiff))) {
-				margin = Math.abs(derivedDiff);
+			} else {
+				// Tout ecart etant jouable, la reprise est desormais toujours fidele.
+				margin = Math.min(MARGIN_MAX, Math.abs(derivedDiff));
 			}
 		}
 		mode = next;
@@ -231,7 +275,7 @@
 				aria-pressed={mode === 'margin'}
 				onclick={() => switchMode('margin')}
 			>
-				Vainqueur + split
+				Vainqueur + ecart
 			</button>
 			<button
 				type="button"
@@ -289,7 +333,7 @@
 	</div>
 
 	{#if editable && mode === 'margin'}
-		<div class="splits" role="group" aria-label="Split predit">
+		<div class="ecart">
 			<button
 				type="button"
 				class="split split--nul"
@@ -299,22 +343,52 @@
 			>
 				Match nul
 			</button>
-			{#each SPLIT_CHOICES as valeur (valeur)}
-				<button
-					type="button"
-					class="split"
-					class:split--active={!nul && margin === valeur}
-					aria-pressed={!nul && margin === valeur}
-					onclick={() => chooseSplit(valeur)}
-				>
-					+{valeur}
-				</button>
-			{/each}
+
+			<div class="ecart__saisie">
+				<label class="tiny muted" for="ecart-{game.id}">Ecart annonce</label>
+				<div class="row">
+					<input
+						id="ecart-{game.id}"
+						type="number"
+						min="1"
+						max={MARGIN_MAX}
+						inputmode="numeric"
+						placeholder="—"
+						style="width:5rem"
+						value={nul ? null : margin}
+						oninput={(e) => saisirEcart((e.currentTarget as HTMLInputElement).value)}
+					/>
+					<!-- Le bonus se met a jour a la frappe : c'est lui qui rend le
+					     choix d'un ecart interessant plutot qu'arbitraire. -->
+					<span class="bonus" class:bonus--vide={bonusAnnonce === null}>
+						{#if bonusAnnonce !== null}
+							<strong>{pct(bonusAnnonce)}</strong>
+							<span class="tiny">si l'ecart est exact</span>
+						{:else}
+							<span class="tiny">annonce un ecart pour voir le bonus</span>
+						{/if}
+					</span>
+				</div>
+			</div>
+
+			<div class="ecart__courants" role="group" aria-label="Ecarts courants">
+				{#each ECARTS_COURANTS as valeur (valeur)}
+					<button
+						type="button"
+						class="split split--sm"
+						class:split--active={!nul && margin === valeur}
+						aria-pressed={!nul && margin === valeur}
+						onclick={() => chooseSplit(valeur)}
+					>
+						+{valeur}
+					</button>
+				{/each}
+			</div>
 		</div>
-		{#if splitHorsListe}
+
+		{#if ecartHorsBornes}
 			<p class="tiny" style="margin:0.4rem 0 0;color:var(--warn)">
-				Ton pronostic enregistre est un ecart de {margin} points, qui n'est plus proposé. Il reste
-				valable tel quel ; choisis un split ci-dessus pour le remplacer.
+				L'ecart doit etre compris entre 1 et {MARGIN_MAX}, ou « Match nul ».
 			</p>
 		{/if}
 	{:else if editable}
@@ -350,15 +424,18 @@
 			{:else if previewDiff !== null}
 				Soit <strong>{marginLabel(previewDiff, game.homeAbbr, game.awayAbbr)}</strong>
 				{#if mode === 'margin' && nul}
-					— ×1,5 si le match finit nul, 0 sinon : aucune equipe n'est designee.
+					— <strong>{bonusAnnonce !== null ? pct(bonusAnnonce) : ''}</strong> si le match finit nul,
+					0 sinon : aucune equipe n'est designee.
 				{:else if mode === 'margin'}
-					— ×1,5 si le split est exact, ×1,375 s'il est rate d'un point, jamais de ×2.
+					— <strong>{bonusAnnonce !== null ? pct(bonusAnnonce) : ''}</strong> si l'ecart est exact,
+					et un quart de moins par point d'erreur (rien au-dela de 4).
 				{:else}
-					— ×1,5 si l'ecart est exact, ×2 si le score l'est. Pas de bonus de proximite.
+					— ×1,5 si l'ecart est exact, ×2 si le score l'est. Pas de bonus de proximite en mode
+					score.
 				{/if}
 				{#if game.pick && !modifie}· enregistre, modifiable jusqu'au kickoff{/if}
 			{:else if mode === 'margin'}
-				Choisis une equipe et un split, ou « Match nul ».
+				Choisis une equipe et annonce un ecart, ou « Match nul ».
 			{:else}
 				Saisis les deux scores : le vainqueur et l'ecart s'en deduisent.
 			{/if}
@@ -367,6 +444,9 @@
 		<div class="between" style="margin-top:0.6rem">
 			<span class="tiny muted">
 				Ton prono : <strong>{pickLabel(game.pick, game.homeAbbr, game.awayAbbr)}</strong>
+				{#if bonusObtenu !== null}
+					· {game.basePoints} × (1 + {Math.round(bonusObtenu * 100)} %)
+				{/if}
 			</span>
 			{#if game.points !== null}
 				<span class="badge" class:badge--open={game.points > 0}>{game.points} pts</span>

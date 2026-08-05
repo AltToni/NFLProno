@@ -281,7 +281,8 @@ export function playerHistory(userId: number, season = currentSeason()) {
 				p.score_home_pred AS scoreHomePred, p.score_away_pred AS scoreAwayPred,
 				p.margin_pred AS marginPred,
 				o.base_points_home AS basePointsHome, o.base_points_away AS basePointsAway,
-				s.points, s.bonus_kind AS bonusKind, s.correct
+				s.points, s.base_points AS basePoints, s.bonus_points AS bonusPoints,
+				s.bonus_kind AS bonusKind, s.correct
 			 FROM picks p
 			 JOIN games g ON g.id = p.game_id
 			 JOIN weeks w ON w.id = g.week_id

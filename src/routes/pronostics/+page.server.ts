@@ -40,7 +40,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			testKind: w.testKind
 		})),
 		games: weekBoard(week.id, user.id),
-		multiplier: playoffMultiplier(week.seasontype, week.number, cfg)
+		multiplier: playoffMultiplier(week.seasontype, week.number, cfg),
+		// Le bareme voyage jusqu'aux cartes : c'est lui qui decide du bonus
+		// annonce sous la saisie, et il doit suivre les reglages de l'admin.
+		bareme: cfg
 	};
 };
 
@@ -107,7 +110,7 @@ export const actions: Actions = {
 					if (pickSide === null) {
 						resultat.manquants.push(gameId);
 					} else {
-						resultat.erreurs[gameId] = 'Choisis un split, ou « Match nul ».';
+						resultat.erreurs[gameId] = 'Annonce un ecart, ou choisis « Match nul ».';
 					}
 					continue;
 				}

@@ -169,6 +169,7 @@
 			{#each group.games as game (game.id)}
 				<GameCard
 					{game}
+					bareme={data.bareme}
 					error={form?.erreurs?.[game.id] ?? null}
 					report={(e) => (etats[game.id] = e)}
 				/>

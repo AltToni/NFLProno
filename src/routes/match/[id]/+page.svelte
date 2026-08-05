@@ -1,7 +1,14 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
 	import Countdown from '$lib/components/Countdown.svelte';
-	import { BONUS_LABEL, GAME_STATUS_LABEL, PICK_MODE_LABEL, marginLabel, pickLabel } from '$lib/nfl';
+	import {
+		BONUS_LABEL,
+		bonusApplique,
+		GAME_STATUS_LABEL,
+		PICK_MODE_LABEL,
+		marginLabel,
+		pickLabel
+	} from '$lib/nfl';
 	import { pickInputFromRow, predictedDiff } from '$lib/scoring';
 
 	let { data } = $props();
@@ -146,6 +153,16 @@
 									<strong>{entry.points}</strong>
 									{#if entry.bonusKind && entry.bonusKind !== 'none'}
 										<span class="badge badge--upset">{BONUS_LABEL[entry.bonusKind]}</span>
+									{/if}
+									<!-- Le calcul, une fois le match final : l'enjeu de base, puis
+										 le bonus qui s'y est ajoute. -->
+									{@const bonus = bonusApplique(entry.basePoints, entry.bonusPoints)}
+									{#if bonus !== null}
+										<div class="tiny muted">
+											{entry.basePoints} × (1 + {Math.round(bonus * 100)} %)
+										</div>
+									{:else if entry.basePoints !== null && entry.points > 0}
+										<div class="tiny muted">{entry.basePoints} pts, sans bonus</div>
 									{/if}
 								{:else}
 									—

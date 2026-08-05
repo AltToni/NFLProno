@@ -790,16 +790,52 @@ tr.me td {
 }
 
 /*
- * Les huit splits jouables, plus « Match nul ». Grille auto-fit plutot qu'un
- * nombre de colonnes fixe : sur un telephone etroit les boutons se replient
- * seuls, sans point de rupture a maintenir.
+ * Saisie de l'ecart : « Match nul », un champ libre avec le bonus annonce a
+ * cote, et des raccourcis vers les ecarts les plus courants.
  */
-.splits {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(3.6rem, 1fr));
-	gap: 0.35rem;
+.ecart {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
 	margin-top: 0.6rem;
 }
+
+.ecart__saisie {
+	display: flex;
+	flex-direction: column;
+	gap: 0.25rem;
+}
+
+.ecart__courants {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(3.2rem, 1fr));
+	gap: 0.35rem;
+}
+
+/*
+ * Le bonus annonce. Vert parce que ce sont des points, et assez gros pour se
+ * lire pendant qu'on tape : c'est lui qui transforme le choix d'un ecart en
+ * arbitrage plutot qu'en devinette.
+ */
+.bonus {
+	display: flex;
+	align-items: baseline;
+	gap: 0.35rem;
+	color: var(--positive);
+	font-variant-numeric: tabular-nums;
+}
+.bonus strong {
+	font-size: 1.15rem;
+	font-family: var(--font-display);
+	letter-spacing: -0.02em;
+}
+.bonus .tiny {
+	color: var(--muted);
+}
+.bonus--vide {
+	color: var(--muted);
+}
+
 .split {
 	padding: 0.55rem 0.3rem;
 	border-radius: var(--radius-sm);
@@ -826,6 +862,12 @@ tr.me td {
 .split--nul {
 	grid-column: 1 / -1;
 	font-weight: 500;
+}
+
+/* Raccourcis d'ecarts courants : plus discrets que la saisie elle-meme. */
+.split--sm {
+	padding: 0.35rem 0.3rem;
+	font-size: 0.85rem;
 }
 
 .game--error {

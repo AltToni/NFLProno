@@ -45,15 +45,15 @@ export const GAME_STATUS_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export const PICK_MODE_LABEL: Record<PickMode, string> = {
-	margin: 'Vainqueur + split',
+	margin: 'Vainqueur + ecart',
 	score: 'Score'
 };
 
 /** Libelle du bonus obtenu, partage par la page match et le profil joueur. */
 export const BONUS_LABEL: Record<string, string> = {
 	none: '',
-	margin: 'split exact',
-	near: 'split a un point',
+	margin: 'ecart exact',
+	near: 'ecart approche',
 	exact: 'score exact',
 	draw: 'match nul'
 };
@@ -88,6 +88,23 @@ export function pickLabel(pick: PickShape, homeAbbr: string, awayAbbr: string): 
 		return marginLabel(predictedDiff(pickInputFromRow(pick)), homeAbbr, awayAbbr);
 	}
 	return `${pick.scoreAwayPred ?? '?'}–${pick.scoreHomePred ?? '?'}`;
+}
+
+/**
+ * Bonus reellement applique, relu depuis les points **stockes**.
+ *
+ * On ne recalcule pas depuis le bareme courant : celui-ci a pu etre modifie
+ * apres coup, et la ligne afficherait alors une explication qui ne correspond
+ * plus aux points inscrits au classement. Le quotient, lui, est toujours
+ * d'accord avec eux.
+ */
+export function bonusApplique(
+	basePoints: number | null | undefined,
+	bonusPoints: number | null | undefined
+): number | null {
+	if (typeof basePoints !== 'number' || typeof bonusPoints !== 'number') return null;
+	if (basePoints <= 0 || bonusPoints <= 0) return null;
+	return bonusPoints / basePoints;
 }
 
 /** Le classement d'un match est fige des le kickoff. */

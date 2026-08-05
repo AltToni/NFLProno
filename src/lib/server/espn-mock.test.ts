@@ -9,7 +9,7 @@ import {
 	mockEnabled,
 	mockPollGames
 } from './espn-mock';
-import { SPLIT_CHOICES } from '$lib/scoring';
+import { bonusEcartExact } from '$lib/scoring';
 
 const BASE = 1_800_000_000;
 
@@ -69,13 +69,12 @@ describe('fixtures', () => {
 		});
 		expect(ecarts).toContain(0); // match nul
 		expect(ecarts.some((e) => e === 1 || e === -1)).toBe(true); // fin serree
-		// Le mode par defaut etant le split, la simulation doit aussi permettre de
-		// gagner un bonus plein et un bonus de proximite — sans quoi elle ne
-		// montrerait plus le bareme reellement en vigueur.
-		const distanceAuSplit = (e: number) =>
-			Math.min(...SPLIT_CHOICES.map((s) => Math.abs(Math.abs(e) - s)));
-		expect(ecarts.some((e) => e !== 0 && distanceAuSplit(e) === 0)).toBe(true);
-		expect(ecarts.some((e) => e !== 0 && distanceAuSplit(e) === 1)).toBe(true);
+		// L'ecart etant libre, la simulation n'a plus a viser une liste de splits.
+		// Ce qu'elle doit encore montrer, c'est l'etendue du bonus de rarete : un
+		// ecart banal qui rapporte peu, et un ecart rare qui rapporte beaucoup.
+		const bonus = ecarts.filter((e) => e !== 0).map((e) => bonusEcartExact(Math.abs(e)));
+		expect(Math.min(...bonus)).toBeLessThan(0.6);
+		expect(Math.max(...bonus)).toBeGreaterThan(1);
 		// Une surprise : l'equipe favorite (moneyline la plus negative) perd.
 		const surprise = FIXTURES.some((f) => {
 			const [h, a] = f.quarts[3];

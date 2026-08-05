@@ -55,15 +55,11 @@
 			</thead>
 			<tbody>
 				<tr>
-					<td><strong>Vainqueur + split</strong><br /><span class="tiny muted">par defaut</span></td>
+					<td><strong>Vainqueur + ecart</strong><br /><span class="tiny muted">par defaut</span></td>
+					<td>une equipe et un ecart de ton choix, ou « Match nul »</td>
 					<td>
-						une equipe, et un ecart parmi
-						<span class="tiny">{data.splits.map((s) => `+${s}`).join(' ')}</span> —
-						ou « Match nul »
-					</td>
-					<td>
-						×{f.ecartExact} split exact<br />
-						×{f.proximite} split rate d'un point<br />
+						<strong class="pts">le bonus de rarete</strong><br />
+						de +{f.plancher} % a +{f.plafond} % selon l'ecart vise<br />
 						<span class="tiny muted">jamais le ×{f.scoreExact} : aucun score n'est annonce</span>
 					</td>
 				</tr>
@@ -73,62 +69,79 @@
 					<td>
 						×{f.ecartExact} ecart exact<br />
 						×{f.scoreExact} score exact<br />
-						<span class="tiny muted">pas de bonus de proximite</span>
+						<span class="tiny muted">forfaitaire : pas de bonus de rarete, pas de tolerance</span>
 					</td>
 				</tr>
 			</tbody>
 		</table>
 	</div>
 
-	<h3>Pourquoi seulement huit splits</h3>
+	<h3>Le bonus de rarete</h3>
 	<p class="small">
-		Les huit valeurs sont espacees de 3 points, et ce n'est pas un detail d'affichage : tout ecart
-		reel entre 2 et 25 est a distance 0 ou 1 d'<strong>exactement un</strong> split. Il y a donc
-		toujours un seul bon choix, et jamais deux reponses defendables.
+		En mode ecart, <strong>plus l'ecart que tu vises est improbable, plus le bonus est gros.</strong>
+		Un match gagne de 3 points est le resultat le plus courant du football americain — un panier a la
+		derniere seconde — et ne vaut presque rien. Un ecart de 17, ou un match nul, sont rares : ils
+		valent cher.
+	</p>
+	<p class="small muted">
+		La frequence de chaque ecart vient des <strong>{data.source.matchs} matchs</strong> de saison
+		reguliere joues entre {data.source.depuis} et {data.source.jusqua}. Elle est figee : elle ne
+		bougera pas en cours de saison.
 	</p>
 
 	<div class="table-wrap">
 		<table>
 			<thead>
 				<tr>
-					<th class="num">Ecart reel</th>
-					<th>Le split qui rapporte</th>
-					<th class="num">Bonus</th>
+					<th class="num">Ecart vise</th>
+					<th class="num">Frequence</th>
+					<th class="num">Bonus si exact</th>
 				</tr>
 			</thead>
 			<tbody>
-				{#each data.proximite as p (p.reel)}
+				{#each data.rarete as r (r.ecart)}
 					<tr>
-						<td class="num">{p.reel}</td>
-						<td>
-							{#if p.exact !== null}
-								<strong>+{p.exact}</strong> — pile dessus
-							{:else if p.proche !== null}
-								<strong>+{p.proche}</strong> — a un point
-							{:else}
-								aucun
-							{/if}
-						</td>
 						<td class="num">
-							{#if p.exact !== null}
-								×{f.ecartExact}
-							{:else if p.proche !== null}
-								×{f.proximite}
-							{:else}
-								—
-							{/if}
+							{#if r.ecart === 0}Match nul{:else}+{r.ecart}{/if}
 						</td>
+						<td class="num">{r.frequence} %</td>
+						<td class="num"><strong class="pts">+{r.bonus} %</strong></td>
 					</tr>
 				{/each}
 			</tbody>
 		</table>
 	</div>
 	<p class="tiny muted">
-		Le bonus de proximite vaut {f.partProximite} fois le bonus plein. Consequence assumee : un match
-		gagne d'un seul point (21–20) ne rapporte aucun bonus en mode split, le premier choix etant a
-		deux points de la. C'est la contrepartie de la liste fermee — en mode score, on peut annoncer
-		n'importe quel ecart, mais il faut alors le viser juste.
+		Le bonus moyen, pondere par la frequence reelle des ecarts, vaut 100 % : le bareme
+		<strong>redistribue</strong>, il n'inflate pas. Il est borne entre +{f.plancher} % et
+		+{f.plafond} % — au-dela de {data.source.ecartMax} points, tous les ecarts partagent la meme
+		frequence, un ecart de 34 n'etant pas plus previsible qu'un de 31.
 	</p>
+
+	<h3>Rater son ecart</h3>
+	<p class="small">
+		Le bonus ne tombe pas d'un coup : tu perds <strong>{f.pas} %</strong> de ce bonus par point
+		d'erreur. Le vainqueur, lui, reste acquis — les points de base sont gagnes des que tu as designe
+		la bonne equipe.
+	</p>
+	<div class="table-wrap">
+		<table>
+			<thead>
+				<tr>
+					<th class="num">Erreur sur l'ecart</th>
+					<th class="num">Part du bonus conservee</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.tolerance as t (t.erreur)}
+					<tr>
+						<td class="num">{t.erreur === 0 ? 'pile dessus' : `± ${t.erreur}`}</td>
+						<td class="num">{t.part} %</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 </div>
 
 <!-- ------------------------------------------------------------------ -->
@@ -154,8 +167,8 @@
 
 	<p class="small">
 		Le match se termine <strong>{ex.homeAbbr} {ex.scoreHome} – {ex.awayAbbr} {ex.scoreAway}</strong>,
-		soit un ecart de <strong>{ex.ecart} points</strong>. Cet ecart n'est pas un split jouable : le
-		seul choix qui rapporte quelque chose en mode split est celui a un point de la.
+		soit un ecart de <strong>{ex.ecart} points</strong>. Voici ce que rapportent quelques
+		pronostics possibles, selon l'ecart annonce et sa rarete.
 	</p>
 
 	<div class="table-wrap">
@@ -172,7 +185,7 @@
 				{#each ex.lignes as ligne (ligne.saisi)}
 					<tr>
 						<td><strong>{ligne.saisi}</strong></td>
-						<td class="tiny muted">{ligne.mode === 'A' ? 'split' : 'score'}</td>
+						<td class="tiny muted">{ligne.mode === 'A' ? 'ecart' : 'score'}</td>
 						<td class="num">
 							<strong>{ligne.points}</strong>
 							{#if ligne.facteur}
@@ -185,15 +198,17 @@
 			</tbody>
 		</table>
 	</div>
-	<p class="tiny muted">
-		Les points sont arrondis a l'entier : {ex.basePointsHome} × {f.proximite} donne
-		{ex.lignes[0].points}.
-	</p>
+	<p class="tiny muted">Les points sont arrondis a l'entier.</p>
 
 	<p class="small">
-		Les deux modes ne sont pas equivalents, et les lignes
-		<strong>{ex.homeAbbr} +3</strong> et <strong>22–25</strong> le montrent : le meme ecart annonce
-		vaut le bonus de proximite en mode split, et rien du tout en mode score.
+		Les deux premieres lignes disent tout du bonus de rarete : <strong>{ex.homeAbbr} +3</strong> et
+		<strong>{ex.homeAbbr} +5</strong> ratent l'ecart reel du meme point, mais +5 est un resultat bien
+		plus rare que +3 — et rapporte donc nettement plus, a erreur egale.
+	</p>
+	<p class="small">
+		Les deux modes ne sont pas equivalents non plus : <strong>{ex.homeAbbr} +3</strong> et
+		<strong>22–25</strong> annoncent le meme ecart, mais le mode score n'a aucune tolerance — rate
+		d'un point, il ne donne rien.
 	</p>
 
 	<h3>Si ce match avait fini {ex.nul.scoreHome} – {ex.nul.scoreAway}</h3>

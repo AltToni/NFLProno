@@ -38,6 +38,9 @@ export interface BoardGame {
 		updatedAt: number;
 	} | null;
 	points: number | null;
+	/** Decomposition des points acquis, pour afficher le calcul une fois final. */
+	basePoints: number | null;
+	bonusPoints: number | null;
 	pickCount: number;
 }
 

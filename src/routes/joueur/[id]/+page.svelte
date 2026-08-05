@@ -1,6 +1,6 @@
 <script lang="ts">
 	import LocalTime from '$lib/components/LocalTime.svelte';
-	import { BONUS_LABEL, PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
+	import { BONUS_LABEL, bonusApplique, PICK_MODE_LABEL, pickLabel } from '$lib/nfl';
 	import { stakePoints } from '$lib/scoring';
 
 	let { data } = $props();
@@ -109,7 +109,15 @@
 							<td class="num">
 								{#if row.points !== null}
 									<strong>{row.points}</strong>
-									{#if row.bonusKind && row.bonusKind !== 'none'}
+									{@const bonus = bonusApplique(row.basePoints, row.bonusPoints)}
+									{#if bonus !== null}
+										<div class="tiny muted">
+											{row.basePoints} × (1 + {Math.round(bonus * 100)} %)
+											{#if row.bonusKind && row.bonusKind !== 'none'}
+												· {BONUS_LABEL[row.bonusKind]}
+											{/if}
+										</div>
+									{:else if row.bonusKind && row.bonusKind !== 'none'}
 										<div class="tiny muted">{BONUS_LABEL[row.bonusKind]}</div>
 									{/if}
 								{:else}

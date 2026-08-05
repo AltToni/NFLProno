@@ -3,12 +3,18 @@ import { requireUser } from '$lib/server/guards';
 import { getScoringConfig } from '$lib/server/settings';
 import {
 	basePoints,
+	bonusEcart,
+	bonusEcartExact,
 	computeScore,
-	SPLIT_CHOICES,
+	ECART_MAX,
+	ECARTS,
+	frequenceEcart,
+	predictedDiff,
 	stakePoints,
 	type GameBase,
 	type GameOutcome,
-	type PickInput
+	type PickInput,
+	type ScoreBreakdown
 } from '$lib/scoring';
 
 /**
@@ -49,13 +55,19 @@ const LIGNES: Ligne[] = [
 		saisi: `${HOME_ABBR} +3`,
 		mode: 'A',
 		pick: { mode: 'margin', pickSide: 'home', marginPred: 3 },
-		pourquoi: 'bon vainqueur, split rate d’un point'
+		pourquoi: 'rate d’un point, sur l’ecart le plus banal du jeu : petit bonus, encore reduit'
 	},
 	{
-		saisi: `${HOME_ABBR} +6`,
+		saisi: `${HOME_ABBR} +5`,
 		mode: 'A',
-		pick: { mode: 'margin', pickSide: 'home', marginPred: 6 },
-		pourquoi: 'bon vainqueur, split a deux points : rien de plus'
+		pick: { mode: 'margin', pickSide: 'home', marginPred: 5 },
+		pourquoi: 'rate d’un point lui aussi, mais sur un ecart bien plus rare : le bonus suit'
+	},
+	{
+		saisi: `${HOME_ABBR} +12`,
+		mode: 'A',
+		pick: { mode: 'margin', pickSide: 'home', marginPred: 12 },
+		pourquoi: 'bon vainqueur, ecart rate de 8 : plus rien du bonus'
 	},
 	{
 		saisi: `${AWAY_ABBR} +3`,
@@ -85,7 +97,7 @@ const LIGNES: Ligne[] = [
 		saisi: '22–25',
 		mode: 'B',
 		pick: { mode: 'score', pickSide: 'home', scoreHomePred: 25, scoreAwayPred: 22 },
-		pourquoi: 'ecart de 3 contre 4 reel — le mode score n’a pas de bonus de proximite'
+		pourquoi: 'ecart de 3 contre 4 reel — le mode score n’a pas de tolerance'
 	},
 	{
 		saisi: '10–30',
@@ -101,13 +113,13 @@ const LIGNES_NUL: Ligne[] = [
 		saisi: 'Match nul',
 		mode: 'A',
 		pick: { mode: 'margin', pickSide: null, marginPred: 0 },
-		pourquoi: 'nul predit, sur la moyenne des deux baremes'
+		pourquoi: 'nul predit : l’issue la plus rare du jeu, donc le bonus le plus eleve'
 	},
 	{
 		saisi: `${HOME_ABBR} +3`,
 		mode: 'A',
 		pick: { mode: 'margin', pickSide: 'home', marginPred: 3 },
-		pourquoi: 'un nul reel n’est jamais un split « rate de peu »'
+		pourquoi: 'un nul reel n’est jamais un ecart « rate de peu »'
 	}
 ];
 
@@ -130,19 +142,28 @@ export const load: PageServerLoad = async ({ locals }) => {
 	};
 
 	/**
-	 * Le facteur applique, lu depuis le bareme via le bonus que le moteur a
-	 * accorde.
+	 * Le facteur applique, recalcule depuis le bareme plutot que lu dans
+	 * `points / enjeu` : les points sont arrondis a l'entier, et le quotient
+	 * rendrait des facteurs qui ne sont la regle de personne.
 	 *
-	 * Surtout pas `points / enjeu` : les points sont arrondis a l'entier, et le
-	 * quotient rendrait des facteurs qui ne sont la regle de personne — 43 / 31
-	 * donne 1,387 la ou le bareme dit ×1,375. On affiche la regle, et les points
-	 * a cote la verifient.
+	 * Le mode ecart ne peut plus se contenter du type de bonus : celui-ci est
+	 * desormais continu, chaque ecart ayant le sien. On refait donc le meme
+	 * calcul que le moteur, avec les memes primitives.
 	 */
-	const facteurDe = (bonus: string): number => {
-		if (bonus === 'exact') return 1 + cfg.exactBonusPct;
-		if (bonus === 'margin') return 1 + cfg.marginBonusPct;
-		if (bonus === 'near') return 1 + cfg.marginBonusPct * cfg.nearMarginFactor;
-		if (bonus === 'draw') return cfg.drawFactor;
+	const facteurDe = (ligne: Ligne, resultat: GameOutcome, detail: ScoreBreakdown): number => {
+		if (detail.bonusKind === 'draw') return cfg.drawFactor;
+		if (ligne.pick.mode === 'margin') {
+			return (
+				1 +
+				bonusEcart(
+					Math.abs(predictedDiff(ligne.pick)),
+					Math.abs(resultat.scoreHome - resultat.scoreAway),
+					cfg
+				)
+			);
+		}
+		if (detail.bonusKind === 'exact') return 1 + cfg.exactBonusPct;
+		if (detail.bonusKind === 'margin') return 1 + cfg.marginBonusPct;
 		return 1;
 	};
 
@@ -150,7 +171,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		lignes.map((ligne) => {
 			const enjeu = stakePoints(ligne.pick.pickSide, jeu);
 			const detail = computeScore(ligne.pick, jeu, resultat, cfg);
-			const facteur = facteurDe(detail.bonusKind);
+			const facteur = facteurDe(ligne, resultat, detail);
 			return {
 				saisi: ligne.saisi,
 				mode: ligne.mode,
@@ -164,15 +185,21 @@ export const load: PageServerLoad = async ({ locals }) => {
 		});
 
 	/**
-	 * De quoi lire la regle de proximite d'un coup d'oeil : pour chaque ecart
-	 * reel, le seul split qui rapporte quelque chose. Genere, donc toujours
-	 * d'accord avec `SPLIT_CHOICES`.
+	 * La table de rarete, telle qu'elle est reellement appliquee. On montre les
+	 * ecarts courants plutot que les trente-et-un seaux : c'est la comparaison
+	 * qui parle, pas l'exhaustivite.
 	 */
-	const proximite = [2, 3, 4, 5, 6, 7, 8, 9, 10].map((reel) => {
-		const exact = SPLIT_CHOICES.find((s) => s === reel) ?? null;
-		const proche = SPLIT_CHOICES.find((s) => Math.abs(s - reel) === 1) ?? null;
-		return { reel, exact, proche };
-	});
+	const rarete = [0, 1, 3, 4, 6, 7, 10, 14, 17, 21, 28].map((m) => ({
+		ecart: m,
+		frequence: Math.round(frequenceEcart(m) * 1000) / 10,
+		bonus: Math.round(bonusEcartExact(m, cfg) * 100)
+	}));
+
+	/** Perte de bonus point par point, jusqu'a extinction. */
+	const tolerance = [0, 1, 2, 3, 4].map((erreur) => ({
+		erreur,
+		part: Math.round(Math.max(0, 1 - cfg.bonusPas * erreur) * 100)
+	}));
 
 	return {
 		cfg: {
@@ -184,13 +211,15 @@ export const load: PageServerLoad = async ({ locals }) => {
 		},
 		facteurs: {
 			ecartExact: nombre(1 + cfg.marginBonusPct),
-			proximite: nombre(1 + cfg.marginBonusPct * cfg.nearMarginFactor),
 			scoreExact: nombre(1 + cfg.exactBonusPct),
 			nul: nombre(cfg.drawFactor),
-			partProximite: nombre(cfg.nearMarginFactor)
+			pas: Math.round(cfg.bonusPas * 100),
+			plancher: Math.round(cfg.bonusPlancher * 100),
+			plafond: Math.round(cfg.bonusPlafond * 100)
 		},
-		splits: [...SPLIT_CHOICES],
-		proximite,
+		source: { depuis: ECARTS.depuis, jusqua: ECARTS.jusqua, matchs: ECARTS.matchs, ecartMax: ECART_MAX },
+		rarete,
+		tolerance,
 		exemple: {
 			homeAbbr: HOME_ABBR,
 			awayAbbr: AWAY_ABBR,
