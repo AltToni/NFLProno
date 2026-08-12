@@ -4,7 +4,7 @@ Document de passation. Il décrit l'état réel du projet, ce qui a été vérif
 ce qui ne l'a pas été, les décisions prises et pourquoi, les pièges connus, et la
 suite dans l'ordre où l'aborder.
 
-Dernière mise à jour : 24 juillet 2026 (session d'exécution).
+Dernière mise à jour : 12 août 2026 (présaison jouable).
 
 ---
 
@@ -89,7 +89,8 @@ Par ordre de criticité.
 - ~~Faire compiler~~ → `npm test` 44/44, `npm run check` 0/0, `npm run build` OK.
 - ~~Valider le parsing ESPN sur données réelles~~ → snapshots 2025 S1 et 2026 S1,
   16 matchs chacun, **aucun repli 50/50**.
-- ~~Garde-fou présaison~~ → implémenté dans `runSnapshot()`.
+- ~~Garde-fou présaison~~ → implémenté dans `runSnapshot()`. *Levé le 12/08/2026 :
+  la présaison est jouable, seule l'intersaison (type 4) reste refusée. Voir §8.*
 
 ### Fait le 24/07/2026 (session d'industrialisation)
 
@@ -412,6 +413,8 @@ src/lib/server/espn.ts          parsing ESPN, c'est là que ça cassera en premi
 src/lib/server/sync.ts          snapshot hebdo + poll des scores
 src/lib/server/results.ts       calcul des points
 src/lib/server/cron.ts          les 5 tâches et leur planification
+src/lib/server/presaison.ts     inventaire + remise à zéro d'avant-saison
+src/lib/server/purge.ts         suppression d'un lot de semaines (test, présaison)
 src/lib/server/db/migrate.ts    ajouter une migration = ajouter un tableau
 src/routes/admin/               tout le pilotage manuel
 ```
@@ -465,3 +468,34 @@ Deux ajustements de permissions ont aussi été nécessaires, tous deux dus au
 fait que le conteneur tourne en uid 1000 : le sous-répertoire `backup/nocturne`
 est créé depuis le conteneur, et les conteneurs utilitaires de restauration
 tournent en `--user root`.
+
+**12 août 2026 — la présaison devient jouable.** Le groupe n'étant que deux
+joueurs à trois semaines du coup d'envoi, la présaison sert de galop d'essai
+grandeur nature pour recruter : vraies semaines, vrais points, comptés au
+classement général, puis remise à zéro avant la semaine 1.
+
+Ça revient sur le défaut n° 7 de juillet — le garde-fou qui refusait
+`seasontype = 1`. Sa raison d'être n'était pas la présaison en soi mais son
+étiquetage : `weekLabel()` aurait produit une « Semaine 3 » indistinguable de
+la semaine 3 régulière. La présaison a donc maintenant ses propres libellés
+(ESPN décale d'un cran : sa semaine 1 est le Hall of Fame, les 2, 3 et 4 sont
+les trois semaines de présaison), et le garde-fou ne refuse plus que le type 4,
+l'intersaison.
+
+Deux effets de bord traités au passage :
+
+> **Le mercredi, ESPN annonce la semaine passée.** Ses fenêtres de calendrier
+> basculent le jeudi en présaison : le snapshot du mercredi 09:00 aurait refigé
+> la semaine déjà jouée au lieu d'ouvrir la suivante. Il vise désormais la
+> première période du calendrier ayant encore un kickoff devant elle, à moins de
+> sept jours — ce qui corrige aussi, en saison régulière, le mercredi qui tombe
+> pile sur la bascule de fenêtre.
+
+> **La borne des sept jours n'est pas décorative.** Sans elle, le mercredi
+> 2 septembre — présaison finie, semaine 1 à huit jours — figerait le barème de
+> la semaine 1 une semaine trop tôt, et le snapshot suivant ne le réécrirait pas
+> (il est idempotent).
+
+Vérifié sur données réelles : snapshot automatique de la semaine du 13 août,
+16 matchs, 16 barèmes figés, **aucun repli 50/50** — les moneylines de présaison
+existent, simplement plus serrées (p ≈ 0,40–0,70) qu'en saison régulière.

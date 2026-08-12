@@ -24,6 +24,10 @@
 
 	const seasonStarted = $derived(data.weeks.some((w) => w.status !== 'a_venir'));
 
+	const preseasonPicks = $derived(
+		data.preseasonWeeks.reduce((total, semaine) => total + semaine.picks, 0)
+	);
+
 	const orphelinsTotal = $derived(
 		data.orphelins.games + data.orphelins.picks + data.orphelins.scores + data.orphelins.odds
 	);
@@ -172,6 +176,7 @@
 			<select name="seasontype" aria-label="Type de saison" style="width:auto">
 				<option value="2">Saison reguliere</option>
 				<option value="3">Playoffs</option>
+				<option value="1">Presaison</option>
 			</select>
 			<label class="small muted row" style="gap:0.3rem">
 				<input type="checkbox" name="force" style="width:auto" /> ecraser le bareme existant
@@ -179,8 +184,9 @@
 			<button class="btn" type="submit">Lancer</button>
 		</form>
 		<p class="tiny muted" style="margin:0">
-			Sans numero, la semaine courante d'ESPN est utilisee. « Ecraser » recalcule un bareme deja
-			fige : a n'utiliser qu'avant l'ouverture des pronostics.
+			Sans numero, la premiere semaine ESPN dont les matchs sont encore a venir est utilisee.
+			« Ecraser » recalcule un bareme deja fige : a n'utiliser qu'avant l'ouverture des pronostics.
+			En presaison, ESPN numerote le Hall of Fame 1 et les trois semaines de presaison 2, 3 et 4.
 		</p>
 
 		<div class="row wrap">
@@ -199,6 +205,57 @@
 		</p>
 	</div>
 </div>
+
+<!-- ------------------------------------------------------------------ -->
+{#if data.preseasonWeeks.length > 0}
+	<div class="card">
+		<h2>Presaison</h2>
+		<p class="small muted">
+			Les semaines de presaison sont de vraies semaines : verrouillage au kickoff, points calcules,
+			et <strong>comptees au classement general</strong>. C'est le galop d'essai d'avant-saison —
+			il faut donc le remettre a zero avant la semaine 1, sinon la vraie saison demarre avec ces
+			points-la.
+		</p>
+
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Semaine</th>
+						<th class="num">Matchs</th>
+						<th class="num">Pronostics</th>
+						<th class="num">Points</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.preseasonWeeks as semaine (semaine.id)}
+						<tr>
+							<td>
+								<a href="/pronostics?semaine={semaine.id}">{semaine.label}</a>
+								<span class="tiny muted">({semaine.status})</span>
+							</td>
+							<td class="num">{semaine.games}</td>
+							<td class="num">{semaine.picks}</td>
+							<td class="num">{semaine.scores}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<form method="POST" action="?/purgerPresaison" use:enhance style="margin-top:0.8rem">
+			<label class="small muted row" style="gap:0.3rem;margin-bottom:0.5rem">
+				<input type="checkbox" name="confirmation" style="width:auto" />
+				je confirme l'effacement des {preseasonPicks} pronostic(s) de presaison
+			</label>
+			<button class="btn btn--danger" type="submit">Remise a zero : effacer la presaison</button>
+		</form>
+		<p class="tiny muted" style="margin:0.4rem 0 0">
+			Supprime les semaines de presaison, leurs matchs, leurs baremes figes, les pronostics et les
+			points. Les comptes, les invitations et les reglages du bareme ne sont pas touches.
+		</p>
+	</div>
+{/if}
 
 <!-- ------------------------------------------------------------------ -->
 <div class="card">

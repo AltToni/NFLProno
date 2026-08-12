@@ -56,6 +56,15 @@ export interface EspnScoreboard {
 	games: EspnGame[];
 }
 
+/** Une entree du calendrier ESPN : un (type de saison, semaine) et sa fenetre. */
+export interface EspnPeriod {
+	seasontype: number;
+	week: number;
+	label: string;
+	startUtc: number | null;
+	endUtc: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
@@ -246,6 +255,68 @@ export function parseScoreboard(payload: any): EspnScoreboard {
 	};
 }
 
+function secondes(value: unknown): number | null {
+	if (typeof value !== 'string' || !value) return null;
+	const ms = new Date(value).getTime();
+	return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
+
+/**
+ * Calendrier complet de la saison, a plat et dans l'ordre : presaison (Hall of
+ * Fame puis semaines 1 a 3), saison reguliere, playoffs. C'est la seule source
+ * qui donne la *suite* des semaines — le scoreboard, lui, ne renvoie que celle
+ * du moment.
+ */
+export function parseCalendar(payload: any): EspnPeriod[] {
+	const blocs: any[] = Array.isArray(payload?.leagues?.[0]?.calendar)
+		? payload.leagues[0].calendar
+		: [];
+	const periodes: EspnPeriod[] = [];
+
+	for (const bloc of blocs) {
+		const seasontype = Number(bloc?.value);
+		const entrees: any[] = Array.isArray(bloc?.entries) ? bloc.entries : [];
+		if (!Number.isFinite(seasontype) || entrees.length === 0) continue;
+
+		for (const entree of entrees) {
+			const week = Number(entree?.value);
+			if (!Number.isFinite(week) || week < 1) continue;
+			periodes.push({
+				seasontype,
+				week,
+				label: String(entree?.label ?? entree?.alternateLabel ?? `${seasontype}/${week}`),
+				startUtc: secondes(entree?.startDate),
+				endUtc: secondes(entree?.endDate)
+			});
+		}
+	}
+
+	return periodes;
+}
+
+/**
+ * La periode annoncee par ESPN, puis celles qui la suivent (`limite` au total).
+ *
+ * Sert au snapshot automatique : le mercredi matin, ESPN annonce encore la
+ * semaine en cours, dont les matchs sont deja joues — la semaine a figer est la
+ * suivante. C'est particulierement net en presaison, ou les fenetres du
+ * calendrier basculent le jeudi.
+ */
+export function periodesCandidates(
+	courante: { seasontype: number; week: number },
+	calendrier: EspnPeriod[],
+	limite = 2
+): { seasontype: number; week: number }[] {
+	const index = calendrier.findIndex(
+		(p) => p.seasontype === courante.seasontype && p.week === courante.week
+	);
+	if (index < 0) return [{ seasontype: courante.seasontype, week: courante.week }];
+
+	return calendrier
+		.slice(index, index + limite)
+		.map((p) => ({ seasontype: p.seasontype, week: p.week }));
+}
+
 // ---------------------------------------------------------------------------
 // API publique
 // ---------------------------------------------------------------------------
@@ -282,15 +353,24 @@ export async function getScoreboard(
 	return { parsed, raw };
 }
 
-/** Semaine courante selon ESPN (le scoreboard sans parametre la renvoie). */
+/**
+ * Semaine courante selon ESPN (le scoreboard sans parametre la renvoie), et le
+ * calendrier de la saison qui vient avec, pour savoir ce qui suit.
+ */
 export async function getCurrentPeriod(): Promise<{
 	season: number;
 	seasontype: number;
 	week: number;
+	calendar: EspnPeriod[];
 }> {
 	const raw = await fetchJson<any>(`${SITE_API}/scoreboard`);
 	const parsed = parseScoreboard(raw);
-	return { season: parsed.season, seasontype: parsed.seasontype, week: parsed.week };
+	return {
+		season: parsed.season,
+		seasontype: parsed.seasontype,
+		week: parsed.week,
+		calendar: parseCalendar(raw)
+	};
 }
 
 /**

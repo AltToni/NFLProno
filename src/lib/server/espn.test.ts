@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { extractOdds, parseAmerican, parseScoreboard, scoreboardUrl } from './espn';
+import {
+	extractOdds,
+	parseAmerican,
+	parseCalendar,
+	parseScoreboard,
+	periodesCandidates,
+	scoreboardUrl
+} from './espn';
 
 describe('scoreboardUrl', () => {
 	/**
@@ -177,5 +184,98 @@ describe('parseScoreboard', () => {
 		expect(parseScoreboard({ events: [{ id: '1', competitions: [{ competitors: [] }] }] }).games).toEqual(
 			[]
 		);
+	});
+});
+
+/**
+ * Calendrier reel de 2026, tronque : c'est lui qui dit que la presaison compte
+ * quatre entrees (Hall of Fame puis les trois semaines) avant la semaine 1
+ * reguliere.
+ */
+const CALENDRIER = {
+	leagues: [
+		{
+			calendar: [
+				{
+					label: 'Preseason',
+					value: '1',
+					entries: [
+						{ label: 'Hall of Fame Weekend', value: '1', startDate: '2026-08-06T07:00Z', endDate: '2026-08-13T06:59Z' },
+						{ label: 'Preseason Week 1', value: '2', startDate: '2026-08-13T07:00Z', endDate: '2026-08-20T06:59Z' },
+						{ label: 'Preseason Week 2', value: '3', startDate: '2026-08-20T07:00Z', endDate: '2026-08-27T06:59Z' },
+						{ label: 'Preseason Week 3', value: '4', startDate: '2026-08-27T07:00Z', endDate: '2026-09-06T06:59Z' }
+					]
+				},
+				{
+					label: 'Regular Season',
+					value: '2',
+					entries: [
+						{ label: 'Week 1', value: '1', startDate: '2026-09-06T07:00Z', endDate: '2026-09-16T06:59Z' },
+						{ label: 'Week 2', value: '2', startDate: '2026-09-16T07:00Z', endDate: '2026-09-23T06:59Z' }
+					]
+				},
+				{ label: 'Off Season', value: '4', startDate: '2027-02-16T08:00Z' }
+			]
+		}
+	]
+};
+
+describe('parseCalendar', () => {
+	it('met les periodes a plat, dans l\'ordre du calendrier', () => {
+		const periodes = parseCalendar(CALENDRIER);
+		expect(periodes.map((p) => `${p.seasontype}/${p.week}`)).toEqual([
+			'1/1',
+			'1/2',
+			'1/3',
+			'1/4',
+			'2/1',
+			'2/2'
+		]);
+		expect(periodes[1].label).toBe('Preseason Week 1');
+		expect(periodes[1].startUtc).toBe(Math.floor(Date.parse('2026-08-13T07:00Z') / 1000));
+	});
+
+	it('ignore les blocs sans entrees et tolere une charge utile cassee', () => {
+		// L'intersaison n'a pas de semaines : elle n'a rien a proposer au snapshot.
+		expect(parseCalendar(CALENDRIER).some((p) => p.seasontype === 4)).toBe(false);
+		expect(parseCalendar({})).toEqual([]);
+		expect(parseCalendar({ leagues: [{ calendar: [{ value: 'x', entries: [{}] }] }] })).toEqual([]);
+	});
+});
+
+describe('periodesCandidates', () => {
+	/**
+	 * Le cas du mercredi de presaison : ESPN annonce encore la semaine dont les
+	 * matchs sont joues, la semaine a figer est la suivante. Les deux doivent
+	 * etre proposees, dans cet ordre.
+	 */
+	it('propose la periode annoncee puis la suivante', () => {
+		const periodes = parseCalendar(CALENDRIER);
+		expect(periodesCandidates({ seasontype: 1, week: 2 }, periodes)).toEqual([
+			{ seasontype: 1, week: 2 },
+			{ seasontype: 1, week: 3 }
+		]);
+	});
+
+	it('enjambe la fin de la presaison', () => {
+		const periodes = parseCalendar(CALENDRIER);
+		expect(periodesCandidates({ seasontype: 1, week: 4 }, periodes)).toEqual([
+			{ seasontype: 1, week: 4 },
+			{ seasontype: 2, week: 1 }
+		]);
+	});
+
+	it('s\'arrete a la derniere periode connue', () => {
+		const periodes = parseCalendar(CALENDRIER);
+		expect(periodesCandidates({ seasontype: 2, week: 2 }, periodes)).toEqual([
+			{ seasontype: 2, week: 2 }
+		]);
+	});
+
+	it('se rabat sur la periode annoncee si le calendrier ne la connait pas', () => {
+		expect(periodesCandidates({ seasontype: 3, week: 5 }, parseCalendar(CALENDRIER))).toEqual([
+			{ seasontype: 3, week: 5 }
+		]);
+		expect(periodesCandidates({ seasontype: 2, week: 1 }, [])).toEqual([{ seasontype: 2, week: 1 }]);
 	});
 });

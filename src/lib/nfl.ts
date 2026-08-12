@@ -1,5 +1,6 @@
 import { pickInputFromRow, predictedDiff, type PickSide } from './scoring';
 
+export const SEASONTYPE_PRESEASON = 1;
 export const SEASONTYPE_REGULAR = 2;
 export const SEASONTYPE_PLAYOFFS = 3;
 
@@ -11,10 +12,23 @@ const PLAYOFF_LABELS: Record<number, string> = {
 	5: 'Super Bowl'
 };
 
+/**
+ * Numerotation ESPN de la presaison : la semaine 1 est le week-end du Hall of
+ * Fame (un seul match), et les semaines 2, 3 et 4 sont les trois vraies
+ * semaines de presaison. On affiche donc `number - 1`, et surtout jamais
+ * « Semaine n » : ce libelle se confondrait avec la saison reguliere dans les
+ * onglets, l'historique du joueur et les classements hebdomadaires.
+ */
+function presaisonLabel(number: number, court: boolean): string {
+	if (number <= 1) return court ? 'HOF' : 'Presaison - Hall of Fame';
+	return court ? `Pre. S${number - 1}` : `Presaison - semaine ${number - 1}`;
+}
+
 export function weekLabel(seasontype: number, number: number): string {
 	if (seasontype === SEASONTYPE_PLAYOFFS) {
 		return PLAYOFF_LABELS[number] ?? `Playoffs - tour ${number}`;
 	}
+	if (seasontype === SEASONTYPE_PRESEASON) return presaisonLabel(number, false);
 	return `Semaine ${number}`;
 }
 
@@ -23,6 +37,7 @@ export function weekShortLabel(seasontype: number, number: number): string {
 		const long = PLAYOFF_LABELS[number] ?? `T${number}`;
 		return long === 'Finales de conference' ? 'Conf.' : long === 'Super Bowl' ? 'SB' : long;
 	}
+	if (seasontype === SEASONTYPE_PRESEASON) return presaisonLabel(number, true);
 	return `S${number}`;
 }
 

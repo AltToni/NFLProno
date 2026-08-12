@@ -88,6 +88,19 @@ partir de `games.kickoff_utc`, et verifie cote serveur à chaque enregistrement
 de pronostic. Un match se verrouille donc exactement à son kickoff, sans
 dependre d'un cron.
 
+### Quelle semaine le snapshot vise
+
+Sans numero impose, `snapshot` prend **la premiere periode du calendrier ESPN
+dont un match est encore à venir, à moins de sept jours**. C'est plus fin que
+« la semaine annoncee par ESPN » : le mercredi matin, ESPN annonce encore la
+semaine dont les matchs sont joues. En presaison c'est systematique — ses
+fenetres de calendrier basculent le jeudi.
+
+La borne des sept jours evite l'effet de bord symetrique : le mercredi 2
+septembre, la presaison est finie mais la semaine 1 reguliere est à huit jours,
+donc rien n'est fige ce jour-là (le snapshot ne fait rien, il est idempotent).
+C'est le mercredi suivant qu'elle s'ouvre, avec des cotes fraiches.
+
 ---
 
 ## 4. Barème
@@ -364,6 +377,9 @@ src/
       auth.ts, mail.ts    invitations, magic links, sessions, SMTP
       cron.ts, backup.ts  ordonnanceur et sauvegardes
       home.ts             donnees de l'accueil (activite, resultats, recap)
+      testing.ts          semaines de test (rejeu, simulation)
+      presaison.ts        inventaire et remise a zero de la presaison
+      purge.ts            suppression d'un lot de semaines, controle d'orphelins
   routes/
     +page.svelte          accueil : hero, semaine en cours, recap, activite
     connexion/            code d'invitation + magic link
@@ -623,10 +639,43 @@ chaque intersaison.
 | Rejouer une semaine passee | `/admin` → Outils de test |
 | Simuler une semaine en 30 min | `/admin` → Outils de test (`MOCK_ESPN=1`) |
 | Effacer les donnees de test | `/admin` → « Supprimer les semaines TEST » |
+| Effacer la presaison | `/admin` → Presaison → « Remise a zero » |
 
 Avant le coup d'envoi de la saison : figer les reglages du barème, lancer un
 snapshot de test sur la semaine 1, verifier les enjeux affiches, puis remettre
 les pronostics à zero si besoin.
+
+### Presaison
+
+Les trois semaines de presaison (mi-aout à fin aout) se jouent **pour de vrai** :
+vrais matchs, vraies cotes, verrouillage au kickoff, points comptes au
+classement general. C'est un galop d'essai grandeur nature — utile pour recruter
+et roder le groupe avant la semaine 1 — et il se termine par une remise à zero.
+
+**Numerotation.** ESPN range la presaison sous `seasontype = 1` et lui donne
+quatre semaines : la 1 est le week-end du Hall of Fame (un seul match), les
+**2, 3 et 4 sont les trois semaines de presaison**. L'application les affiche
+« Presaison - semaine 1/2/3 », jamais « Semaine n », pour qu'aucune ne se
+confonde avec la saison reguliere dans les onglets, l'historique ou le
+classement hebdomadaire.
+
+**Ouvrir une semaine.** Le cycle hebdomadaire ordinaire suffit : `snapshot` le
+mercredi vise la semaine dont les matchs arrivent (cf. section 3), `results`
+tourne du jeudi au lundi, `close` clot le mardi. Pour l'ouvrir à la main :
+`/admin` → Actions manuelles → type **Presaison**, numero **2**, **3** ou **4**.
+
+**Ce qu'il faut savoir des cotes.** Les moneylines de presaison existent (aucun
+repli 50/50 constate sur la semaine du 13 aout 2026) mais sont serrees : les
+probabilites tournent autour de 0,40–0,70, contre des ecarts bien plus larges en
+saison reguliere. Les enjeux se ressemblent donc davantage d'un match à l'autre,
+et l'ecart annonce pese proportionnellement plus.
+
+**Remise à zero.** `/admin` → **Presaison** liste les semaines avec ce qu'elles
+contiennent, et le bouton « Remise a zero » les supprime avec leurs matchs,
+baremes figes, pronostics et points, apres confirmation. Comptes, invitations et
+reglages du barème ne sont pas touches : seul le classement repart de zero. À
+faire **avant le snapshot de la semaine 1**, sinon la vraie saison demarre avec
+les points d'aout.
 
 ### Semaines de test
 

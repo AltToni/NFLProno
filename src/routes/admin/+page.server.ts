@@ -28,6 +28,7 @@ import {
 	orphelins,
 	purgeTestWeeks
 } from '$lib/server/testing';
+import { listPreseasonWeeks, purgePreseasonWeeks } from '$lib/server/presaison';
 
 export const load: PageServerLoad = async () => {
 	return {
@@ -64,6 +65,14 @@ export const load: PageServerLoad = async () => {
 			games: t.games,
 			picks: t.picks,
 			scores: t.scores
+		})),
+		preseasonWeeks: listPreseasonWeeks().map((p) => ({
+			id: p.week.id,
+			label: p.week.label,
+			status: p.week.status,
+			games: p.games,
+			picks: p.picks,
+			scores: p.scores
 		})),
 		mockEnabled: mockEnabled(),
 		nbFixtures: NB_FIXTURES,
@@ -241,6 +250,35 @@ export const actions: Actions = {
 		} catch (err) {
 			return fail(400, { error: (err as Error).message });
 		}
+	},
+
+	/**
+	 * Remise a zero d'avant-saison : efface la presaison, garde les joueurs.
+	 * La case a cocher est verifiee ici et pas seulement dans le navigateur —
+	 * c'est la seule action de l'admin qui supprime des points reels.
+	 */
+	purgerPresaison: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const form = await request.formData();
+		if (form.get('confirmation') !== 'on') {
+			return fail(400, { error: 'Coche la confirmation : la presaison sera definitivement effacee.' });
+		}
+
+		const rapport = purgePreseasonWeeks();
+		if (rapport.weeks === 0) return { ok: 'Aucune semaine de presaison a supprimer.' };
+
+		const restants = orphelins();
+		const total = restants.games + restants.picks + restants.scores + restants.odds;
+
+		return {
+			ok:
+				`Remise a zero : ${rapport.weeks} semaine(s) de presaison (${rapport.labels.join(', ')}), ` +
+				`${rapport.games} match(s), ${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de ` +
+				`points, ${rapport.odds} bareme(s). Les comptes, invitations et reglages sont intacts. ` +
+				(total === 0
+					? 'Aucune ligne orpheline.'
+					: `Attention : ${total} ligne(s) orpheline(s) subsistent.`)
+		};
 	},
 
 	purgerTests: async ({ locals }) => {

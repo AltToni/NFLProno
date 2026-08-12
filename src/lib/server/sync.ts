@@ -1,11 +1,17 @@
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { db } from './db';
 import { games, oddsSnapshots, weeks } from './db/schema';
-import { enrichOdds, getCurrentPeriod, getScoreboard, type EspnGame } from './espn';
+import {
+	enrichOdds,
+	getCurrentPeriod,
+	getScoreboard,
+	periodesCandidates,
+	type EspnGame
+} from './espn';
 import { mockEnabled, mockPollGames } from './espn-mock';
 import { getScoringConfig, currentSeason } from './settings';
 import { stakesFromMoneylines } from '$lib/scoring';
-import { SEASONTYPE_PLAYOFFS, SEASONTYPE_REGULAR } from '$lib/nfl';
+import { SEASONTYPE_PLAYOFFS, SEASONTYPE_PRESEASON, SEASONTYPE_REGULAR } from '$lib/nfl';
 import { ensureWeek } from './weeks';
 import { logger } from './logger';
 import { now } from '$lib/time';
@@ -159,6 +165,53 @@ export function writeSnapshots(espnGames: EspnGame[], force = false): SnapshotWr
 }
 
 /**
+ * Au-dela de ce delai, la semaine suivante est trop lointaine pour qu'on fige
+ * son bareme : les cotes bougeraient encore beaucoup, et le snapshot du
+ * mercredi d'apres ne les reecrirait pas (il est idempotent). Sept jours, c'est
+ * assez pour attraper la semaine suivante des le mercredi et pas assez pour
+ * ouvrir la semaine 1 de la saison reguliere depuis la presaison.
+ */
+const AVANCE_MAX_S = 7 * 24 * 3600;
+
+/**
+ * Quelle semaine figer quand l'admin n'en impose aucune.
+ *
+ * ESPN annonce la semaine *en cours*, or le mercredi matin ses matchs sont
+ * joues : la bonne cible est la suivante. On prend donc la premiere periode du
+ * calendrier qui a encore un kickoff devant elle, a moins de sept jours. En
+ * presaison c'est indispensable — les fenetres du calendrier basculent le jeudi,
+ * ESPN annonce donc encore la semaine passee au moment du snapshot.
+ *
+ * Sans candidate exploitable (hors saison, reseau capricieux sur une semaine),
+ * on retombe sur ce qu'annonce ESPN : le comportement d'avant.
+ */
+async function cibleAutomatique(season: number): Promise<{ seasontype: number; week: number }> {
+	const periode = await getCurrentPeriod();
+	const maintenant = now();
+
+	for (const candidate of periodesCandidates(periode, periode.calendar)) {
+		try {
+			const { parsed } = await getScoreboard(season, candidate.seasontype, candidate.week);
+			const prochainKickoff = parsed.games
+				.map((g) => g.kickoffUtc)
+				.filter((k) => k > maintenant)
+				.sort((a, b) => a - b)[0];
+
+			if (prochainKickoff !== undefined && prochainKickoff - maintenant <= AVANCE_MAX_S) {
+				return candidate;
+			}
+		} catch (error) {
+			logger.warn(
+				`Ciblage du snapshot : ${season} / type ${candidate.seasontype} / semaine ` +
+					`${candidate.week} illisible (${(error as Error).message})`
+			);
+		}
+	}
+
+	return { seasontype: periode.seasontype, week: periode.week };
+}
+
+/**
  * Snapshot hebdomadaire (spec 3, mercredi 09:00) : fige le bareme de la semaine
  * puis ouvre les pronostics.
  *
@@ -184,25 +237,27 @@ export async function runSnapshot(
 		seasontype = options.seasontype;
 		week = options.week;
 	} else {
-		const period = await getCurrentPeriod();
-		seasontype = options.seasontype ?? period.seasontype ?? 2;
-		week = options.week ?? period.week;
+		const cible = await cibleAutomatique(season);
+		seasontype = options.seasontype ?? cible.seasontype ?? SEASONTYPE_REGULAR;
+		week = options.week ?? cible.week;
 	}
 
 	if (!Number.isFinite(week) || week < 1) {
 		throw new Error('Impossible de determiner la semaine courante depuis ESPN');
 	}
 
-	// Garde-fou presaison : `weekLabel()` ne connait que les types 2 et 3. Un
-	// snapshot en aout, quand ESPN bascule sur `seasontype = 1`, creerait une
-	// « Semaine 3 » de presaison indistinguable de la semaine 3 reguliere dans
-	// les classements. Le jeu ne porte que sur la saison reguliere et les
-	// playoffs : on refuse plutot que de polluer la base.
-	if (seasontype !== SEASONTYPE_REGULAR && seasontype !== SEASONTYPE_PLAYOFFS) {
+	// La presaison est jouable (elle porte ses propres libelles, cf. weekLabel),
+	// la saison reguliere et les playoffs aussi. Le type 4 — hors-saison — n'a
+	// aucun match a proposer : on refuse plutot que de creer une semaine vide.
+	if (
+		seasontype !== SEASONTYPE_PRESEASON &&
+		seasontype !== SEASONTYPE_REGULAR &&
+		seasontype !== SEASONTYPE_PLAYOFFS
+	) {
 		throw new Error(
-			`Snapshot refuse : ESPN annonce le type de saison ${seasontype} ` +
-				`(presaison ou hors-saison). Seuls la saison reguliere (2) et les playoffs (3) ` +
-				`sont pris en compte. Relance avec un type explicite si c'est volontaire.`
+			`Snapshot refuse : ESPN annonce le type de saison ${seasontype} (hors-saison). ` +
+				`Seuls la presaison (1), la saison reguliere (2) et les playoffs (3) sont ` +
+				`pris en compte. Relance avec un type explicite si c'est volontaire.`
 		);
 	}
 

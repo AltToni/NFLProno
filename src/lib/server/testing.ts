@@ -1,6 +1,7 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { db, sqlite } from './db';
+import { db } from './db';
 import { weeks } from './db/schema';
+import { compterSemaine, orphelins, purgerSemaines, type PurgeReport } from './purge';
 import { enrichOdds, getScoreboard } from './espn';
 import { FIXTURES, mockCreateGames, mockEnabled } from './espn-mock';
 import { upsertGames, writeSnapshots } from './sync';
@@ -229,94 +230,16 @@ export function listTestWeeks(): TestWeekSummary[] {
 		.orderBy(weeks.season, weeks.number)
 		.all();
 
-	return rows.map((week) => {
-		const compte = sqlite
-			.prepare(
-				`SELECT
-					(SELECT COUNT(*) FROM games  WHERE week_id = @weekId) AS games,
-					(SELECT COUNT(*) FROM picks  WHERE game_id IN (SELECT id FROM games WHERE week_id = @weekId)) AS picks,
-					(SELECT COUNT(*) FROM scores WHERE week_id = @weekId) AS scores`
-			)
-			.get({ weekId: week.id }) as { games: number; picks: number; scores: number };
-		return { week, ...compte };
-	});
+	return rows.map((week) => ({ week, ...compterSemaine(week.id) }));
 }
 
-export interface PurgeReport {
-	weeks: number;
-	games: number;
-	picks: number;
-	scores: number;
-	odds: number;
-	labels: string[];
-}
-
-/**
- * Supprime toutes les semaines marquees et ce qui en depend.
- *
- * L'ordre suit les cles etrangeres (`PRAGMA foreign_keys = ON` cote db) :
- * scores et pronostics d'abord, puis les baremes, puis les matchs, puis les
- * semaines. Aucune ligne n'est supprimee par un `ON DELETE CASCADE` — le
- * schema n'en declare pas — donc tout est explicite ici.
- *
- * Les pronostics et les scores sont vises **par match autant que par
- * semaine** : c'est redondant tant que `scores.week_id` correspond au match,
- * et c'est justement ce qu'on ne veut pas avoir a supposer au moment de
- * nettoyer.
- */
+/** Supprime toutes les semaines marquees et ce qui en depend. */
 export function purgeTestWeeks(): PurgeReport {
-	const cibles = db
-		.select({ id: weeks.id, label: weeks.label })
-		.from(weeks)
-		.where(isNotNull(weeks.testKind))
-		.all();
-
-	if (cibles.length === 0) {
-		return { weeks: 0, games: 0, picks: 0, scores: 0, odds: 0, labels: [] };
-	}
-
-	const SEMAINES = `SELECT id FROM weeks WHERE test_kind IS NOT NULL`;
-	const MATCHS = `SELECT id FROM games WHERE week_id IN (${SEMAINES})`;
-
-	const rapport = sqlite.transaction(() => {
-		const scores = sqlite
-			.prepare(`DELETE FROM scores WHERE week_id IN (${SEMAINES}) OR game_id IN (${MATCHS})`)
-			.run().changes;
-		const picks = sqlite.prepare(`DELETE FROM picks WHERE game_id IN (${MATCHS})`).run().changes;
-		const odds = sqlite
-			.prepare(`DELETE FROM odds_snapshots WHERE game_id IN (${MATCHS})`)
-			.run().changes;
-		const jeux = sqlite.prepare(`DELETE FROM games WHERE week_id IN (${SEMAINES})`).run().changes;
-		const semaines = sqlite.prepare(`DELETE FROM weeks WHERE test_kind IS NOT NULL`).run().changes;
-		return { weeks: semaines, games: jeux, picks, scores, odds };
-	})();
-
-	logger.info(
-		`Purge des semaines de test : ${rapport.weeks} semaine(s), ${rapport.games} match(s), ` +
-			`${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de points, ` +
-			`${rapport.odds} bareme(s) — ${cibles.map((c) => c.label).join(', ')}`
-	);
-
-	return { ...rapport, labels: cibles.map((c) => c.label) };
+	return purgerSemaines('test_kind IS NOT NULL', 'semaines de test');
 }
 
-/**
- * Controle d'integrite apres purge : lignes referencant une semaine ou un
- * match disparu. Doit toujours renvoyer des zeros ; sert au test et au
- * diagnostic depuis l'admin.
- */
-export function orphelins(): { games: number; picks: number; scores: number; odds: number } {
-	return sqlite
-		.prepare(
-			`SELECT
-				(SELECT COUNT(*) FROM games  WHERE week_id NOT IN (SELECT id FROM weeks)) AS games,
-				(SELECT COUNT(*) FROM picks  WHERE game_id NOT IN (SELECT id FROM games)) AS picks,
-				(SELECT COUNT(*) FROM scores WHERE game_id NOT IN (SELECT id FROM games)
-					OR week_id NOT IN (SELECT id FROM weeks)) AS scores,
-				(SELECT COUNT(*) FROM odds_snapshots WHERE game_id NOT IN (SELECT id FROM games)) AS odds`
-		)
-		.get() as { games: number; picks: number; scores: number; odds: number };
-}
+export type { PurgeReport } from './purge';
+export { orphelins };
 
 /** Utilise par l'admin pour n'afficher le bouton de simulation que s'il sert. */
 export { mockEnabled };
