@@ -595,6 +595,26 @@ de chaque fichier et permet de le **telecharger** — le seul moyen d'en sortir
 une copie sans acces SSH. C'est aussi la qu'on declenche une sauvegarde
 immediate.
 
+#### « Derniere sauvegarde : probleme / jamais »
+
+L'indicateur nomme la cause et affiche le **chemin absolu** reellement
+consulte. Trois cas, qui ne se reparent pas de la meme façon :
+
+| Detail affiche | Ce qui se passe |
+|---|---|
+| `repertoire vide : <chemin>` | Rien d'anormal sur une installation neuve : le cron passe à 04:30. « Sauvegarder maintenant » tranche tout de suite. |
+| `repertoire non inscriptible : <chemin>` | La cause la plus frequente. Le conteneur ecrit en **uid 1000**, et `docker compose up` cree un repertoire de bind mount manquant **en root** : `./backup` lui est alors ferme, et aucune sauvegarde n'a jamais pu s'ecrire. |
+| `repertoire absent : <chemin>` | Le volume n'est pas monte. Verifier le montage `./backup:/backup` et la variable `BACKUP_DIR`. |
+
+Le second cas se corrige depuis l'hote, la commande est rappelee dans l'admin :
+
+```bash
+sudo chown 1000:1000 backup
+```
+
+C'est exactement le `mkdir -p backup && sudo chown 1000:1000 backup` de la
+premiere installation : saute une fois, il ne se rattrape pas tout seul.
+
 #### Restauration
 
 **Ne jamais copier le fichier a la main** : `nfl.db-wal` et `nfl.db-shm`

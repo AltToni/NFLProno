@@ -18,6 +18,7 @@ import { runSnapshot } from '$lib/server/sync';
 import { recomputeSeason } from '$lib/server/results';
 import {
 	backupDatabase,
+	backupDirStatus,
 	cancelPendingRestore,
 	listBackups,
 	restoreDatabase,
@@ -91,6 +92,7 @@ export const load: PageServerLoad = async () => {
 		orphelins: orphelins(),
 		adjustments: listAdjustments(),
 		backups: listBackups(),
+		backupDir: backupDirStatus(),
 		restorePending: restorePending()
 	};
 };

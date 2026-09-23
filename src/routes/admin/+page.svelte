@@ -355,6 +355,28 @@
 		Deux mecanismes ecrivent ici : le cron interne de l'application (quotidien, meme disque) et le
 		script de l'hote (compresse, copie hors machine). Seul le second protege d'une panne disque.
 	</p>
+	<p class="tiny muted" style="margin:-0.4rem 0 0.9rem">
+		<code class="tiny">BACKUP_DIR</code> : <code class="tiny">{data.backupDir.path}</code>
+	</p>
+
+	<!-- Une sauvegarde qui n'a jamais tourne se diagnostique ici, pas au shell :
+	     les deux causes de blocage sont nommees avec leur remede. -->
+	{#if !data.backupDir.exists}
+		<div class="alert alert--error small">
+			<strong>Le repertoire n'existe pas.</strong> Aucune sauvegarde ne peut etre ecrite. Le cron
+			le creera a son prochain passage, mais si le chemin est monte depuis l'hote c'est qu'il n'est
+			pas monte : verifier le volume et la variable <code class="tiny">BACKUP_DIR</code>.
+		</div>
+	{:else if !data.backupDir.writable}
+		<div class="alert alert--error small">
+			<strong>Le repertoire n'est pas inscriptible.</strong> C'est la cause la plus frequente d'une
+			sauvegarde qui n'a jamais tourne : le conteneur ecrit en uid 1000, et un
+			<code class="tiny">backup/</code> cree par root lui est ferme.
+			<div style="margin-top:0.4rem">
+				<code class="tiny">sudo chown 1000:1000 {data.backupDir.path}</code>
+			</div>
+		</div>
+	{/if}
 
 	<div class="row wrap" style="margin-bottom:0.9rem">
 		<form method="POST" action="?/sauvegarde" use:enhance>
@@ -371,8 +393,9 @@
 
 	{#if data.backups.length === 0}
 		<p class="small muted" style="margin:0">
-			Aucune sauvegarde dans <code class="tiny">BACKUP_DIR</code>. La tache quotidienne en cree une
-			a 04:30 ; « Sauvegarder maintenant » en cree une tout de suite.
+			Aucune sauvegarde dans <code class="tiny">{data.backupDir.path}</code>. La tache quotidienne
+			en cree une a 04:30 ; « Sauvegarder maintenant » en cree une tout de suite — et si elle
+			echoue, le message dira pourquoi.
 		</p>
 	{:else}
 		<div class="table-wrap">

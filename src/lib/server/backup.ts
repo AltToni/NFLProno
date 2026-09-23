@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import {
+	accessSync,
+	constants,
 	copyFileSync,
 	existsSync,
 	mkdirSync,
@@ -20,6 +22,39 @@ import { logger } from './logger';
 
 export function backupDir(): string {
 	return resolve(process.env.BACKUP_DIR ?? './backup');
+}
+
+export interface BackupDirStatus {
+	/** Chemin absolu reellement consulte — jamais la valeur brute de la variable. */
+	path: string;
+	exists: boolean;
+	/** Le processus peut-il y ecrire ? Faux = la sauvegarde echouera. */
+	writable: boolean;
+	files: number;
+}
+
+/**
+ * Etat du repertoire de sauvegarde.
+ *
+ * « Aucune sauvegarde » a trois causes bien distinctes — repertoire absent,
+ * repertoire non inscriptible, repertoire vide — et un diagnostic qui ne les
+ * separe pas laisse chercher au mauvais endroit. Le conteneur tourne en uid
+ * 1000 : un `backup/` cree par root est le piege le plus frequent, et il ne se
+ * voit que par le test d'ecriture.
+ */
+export function backupDirStatus(): BackupDirStatus {
+	const path = backupDir();
+	if (!existsSync(path)) return { path, exists: false, writable: false, files: 0 };
+
+	let writable = false;
+	try {
+		accessSync(path, constants.W_OK);
+		writable = true;
+	} catch {
+		// Droits insuffisants : la sauvegarde echouera, autant le dire avant.
+	}
+
+	return { path, exists: true, writable, files: listBackups().length };
 }
 
 /**

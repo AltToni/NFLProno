@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -101,6 +109,49 @@ describe('backupDatabase', () => {
 		writeFileSync(join(sauvegardeDir, 'notes.txt'), 'pas une sauvegarde');
 		expect(m.backup.listBackups().some((f) => f.name === 'notes.txt')).toBe(false);
 		rmSync(join(sauvegardeDir, 'notes.txt'), { force: true });
+	});
+});
+
+describe('backupDirStatus', () => {
+	it('rend compte d’un repertoire utilisable', () => {
+		expect(m.backup.backupDirStatus()).toMatchObject({
+			path: sauvegardeDir,
+			exists: true,
+			writable: true
+		});
+		expect(m.backup.backupDirStatus().files).toBeGreaterThan(0);
+	});
+
+	it('distingue un repertoire absent d’un repertoire vide', () => {
+		// Les deux donnent « aucune sauvegarde » a l'ecran, et pourtant ils ne se
+		// reparent pas de la meme facon : l'un est un volume non monte, l'autre
+		// un cron qui n'est pas encore passe.
+		const vide = join(repertoire, 'vide');
+		mkdirSync(vide, { recursive: true });
+		process.env.BACKUP_DIR = vide;
+		expect(m.backup.backupDirStatus()).toMatchObject({ exists: true, writable: true, files: 0 });
+
+		process.env.BACKUP_DIR = join(repertoire, 'inexistant');
+		expect(m.backup.backupDirStatus()).toMatchObject({ exists: false, writable: false, files: 0 });
+
+		process.env.BACKUP_DIR = sauvegardeDir;
+	});
+
+	it('signale un repertoire ferme en ecriture', () => {
+		// Le piege du conteneur : un `backup/` appartenant a root, l'application
+		// tournant en uid 1000. Le test est saute sous root, qui traverse les
+		// droits et ne verrait donc rien.
+		if (typeof process.getuid === 'function' && process.getuid() === 0) return;
+
+		const ferme = join(repertoire, 'ferme');
+		mkdirSync(ferme, { recursive: true });
+		chmodSync(ferme, 0o500);
+		process.env.BACKUP_DIR = ferme;
+
+		expect(m.backup.backupDirStatus()).toMatchObject({ exists: true, writable: false });
+
+		chmodSync(ferme, 0o700);
+		process.env.BACKUP_DIR = sauvegardeDir;
 	});
 });
 

@@ -4,6 +4,7 @@ import { and, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 import { db, sqlite } from './db';
 import { cronRuns, games, oddsSnapshots, weeks } from './db/schema';
 import { TASK_LABELS, type TaskName } from './cron';
+import { backupDir, backupDirStatus } from './backup';
 import { now } from '$lib/time';
 
 /**
@@ -64,7 +65,11 @@ function pire(a: Gravite, b: Gravite): Gravite {
 
 /** Sauvegarde la plus recente, tous mecanismes confondus. */
 function derniereSauvegardeFichier(): { horodatage: number | null; nom: string | null } {
-	const racine = process.env.BACKUP_DIR ?? './backup';
+	// `backupDir()` plutot que de relire la variable : c'est la fonction qui
+	// resout le chemin pour l'ecriture, et le diagnostic doit porter sur le
+	// repertoire reellement utilise, pas sur un second calcul qui pourrait
+	// deriver — notamment quand BACKUP_DIR est relatif.
+	const racine = backupDir();
 	if (!existsSync(racine)) return { horodatage: null, nom: null };
 
 	let meilleur: { horodatage: number; nom: string } | null = null;
@@ -208,6 +213,21 @@ export function etatSysteme(): EtatSysteme {
 			: (fichier.horodatage ?? cronSauvegarde);
 	const ageSauvegarde = derniereSauvegarde ? maintenant - derniereSauvegarde : null;
 
+	// « Aucune sauvegarde » a plusieurs causes, et le detail doit dire laquelle
+	// plutot que de renvoyer au nom de la variable : le repertoire n'existe pas,
+	// il existe mais le processus ne peut pas y ecrire (uid 1000 contre un
+	// `backup/` cree par root, le piege le plus frequent), ou il est simplement
+	// encore vide parce que le cron de 04:30 n'est pas passe. Le chemin absolu
+	// est affiche dans tous les cas : c'est lui qu'on va verifier au shell.
+	const repertoire = backupDirStatus();
+	const detailSauvegarde = fichier.nom
+		? `dernier fichier : ${fichier.nom} (${repertoire.path})`
+		: !repertoire.exists
+			? `repertoire absent : ${repertoire.path}`
+			: !repertoire.writable
+				? `repertoire non inscriptible : ${repertoire.path} — le conteneur tourne en uid 1000`
+				: `repertoire vide : ${repertoire.path}`;
+
 	indicateurs.push({
 		cle: 'sauvegarde',
 		libelle: 'Derniere sauvegarde',
@@ -218,7 +238,7 @@ export function etatSysteme(): EtatSysteme {
 					? 'probleme'
 					: 'ok',
 		horodatage: derniereSauvegarde,
-		detail: fichier.nom ? `dernier fichier : ${fichier.nom}` : 'aucun fichier dans BACKUP_DIR'
+		detail: detailSauvegarde
 	});
 
 	// --- Erreurs de taches ----------------------------------------------------
