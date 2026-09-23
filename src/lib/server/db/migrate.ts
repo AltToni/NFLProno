@@ -271,6 +271,34 @@ export const MIGRATIONS: string[][] = [
 		`CREATE UNIQUE INDEX IF NOT EXISTS scores_user_game_uidx ON scores (user_id, game_id)`,
 		`CREATE INDEX IF NOT EXISTS scores_week_idx ON scores (week_id)`,
 		`CREATE INDEX IF NOT EXISTS scores_user_idx ON scores (user_id)`
+	],
+
+	// --- v5 : ajustements de points ------------------------------------------
+	// `scores` est une table **derivee** : `computeGameScores` la vide et la
+	// reecrit a chaque recalcul, a partir des pronostics et du bareme fige. Une
+	// correction ecrite dedans ne survivrait donc pas au prochain poll.
+	//
+	// Les ajustements vivent a cote, dans leur propre table, et sont ajoutes aux
+	// totaux au moment du classement. Un joueur absent une journee peut ainsi
+	// recevoir une compensation sans qu'aucun pronostic soit invente pour lui, et
+	// sans que le recalcul l'efface.
+	//
+	// Une ligne au plus par joueur et par semaine : la correction est un fait
+	// unique (« absent en J1 »), pas un historique d'operations. Reprendre la
+	// meme paire ecrase la valeur precedente.
+	[
+		`CREATE TABLE IF NOT EXISTS score_adjustments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id),
+			week_id INTEGER NOT NULL REFERENCES weeks(id),
+			points INTEGER NOT NULL,
+			reason TEXT NOT NULL,
+			created_by INTEGER REFERENCES users(id),
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS score_adjustments_user_week_uidx
+			ON score_adjustments (user_id, week_id)`,
+		`CREATE INDEX IF NOT EXISTS score_adjustments_week_idx ON score_adjustments (week_id)`
 	]
 ];
 

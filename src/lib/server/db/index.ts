@@ -4,10 +4,18 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import * as schema from './schema';
 import { runMigrations } from './migrate';
+import { applyPendingRestore } from './pending-restore';
 
 export const DATABASE_PATH = resolve(process.env.DATABASE_PATH ?? './data/nfl.db');
 
 mkdirSync(dirname(DATABASE_PATH), { recursive: true });
+
+/**
+ * Avant toute ouverture : une restauration demandee depuis l'admin attend
+ * peut-etre d'etre mise en place. C'est le seul instant ou aucun descripteur
+ * ne tient la base.
+ */
+export const restoreApplied = applyPendingRestore(DATABASE_PATH);
 
 export const sqlite = new Database(DATABASE_PATH);
 

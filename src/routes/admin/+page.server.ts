@@ -16,8 +16,20 @@ import {
 import { recentRuns, runTask, taskStatuses, closeFinishedWeeks, type TaskName } from '$lib/server/cron';
 import { runSnapshot } from '$lib/server/sync';
 import { recomputeSeason } from '$lib/server/results';
-import { backupDatabase } from '$lib/server/backup';
-import { listWeeks } from '$lib/server/weeks';
+import {
+	backupDatabase,
+	cancelPendingRestore,
+	listBackups,
+	restoreDatabase,
+	restorePending
+} from '$lib/server/backup';
+import {
+	deleteAdjustment,
+	listAdjustments,
+	setAdjustment,
+	weekAverageWithout
+} from '$lib/server/adjustments';
+import { getWeekById, listWeeks } from '$lib/server/weeks';
 import { etatSysteme } from '$lib/server/health';
 import {
 	createReplayWeek,
@@ -76,7 +88,10 @@ export const load: PageServerLoad = async () => {
 		})),
 		mockEnabled: mockEnabled(),
 		nbFixtures: NB_FIXTURES,
-		orphelins: orphelins()
+		orphelins: orphelins(),
+		adjustments: listAdjustments(),
+		backups: listBackups(),
+		restorePending: restorePending()
 	};
 };
 
@@ -206,6 +221,126 @@ export const actions: Actions = {
 		}
 	},
 
+	/**
+	 * Ajustement manuel. Les points peuvent etre negatifs : une correction va
+	 * dans les deux sens.
+	 */
+	ajustement: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		const userId = Number(form.get('userId'));
+		const weekId = Number(form.get('weekId'));
+		const points = Number(form.get('points'));
+		const reason = String(form.get('reason') ?? '');
+
+		const player = db.select().from(users).where(eq(users.id, userId)).get();
+		if (!player) return fail(404, { error: 'Joueur introuvable.' });
+		const week = getWeekById(weekId);
+		if (!week) return fail(404, { error: 'Semaine introuvable.' });
+		if (!Number.isInteger(points)) {
+			return fail(400, { error: 'Les points doivent etre un nombre entier.' });
+		}
+
+		try {
+			setAdjustment({ userId, weekId, points, reason, createdBy: admin.id });
+		} catch (err) {
+			return fail(400, { error: (err as Error).message });
+		}
+
+		return {
+			ok:
+				`${player.pseudo} : ${points > 0 ? '+' : ''}${points} pts sur ${week.label}. ` +
+				`Le classement en tient compte immediatement, et le recalcul des points ne l'efface pas.`
+		};
+	},
+
+	/**
+	 * Le cas qui a motive la fonctionnalite : un joueur empeche de jouer une
+	 * journee recoit la moyenne des autres. La moyenne est calculee ici plutot
+	 * que saisie a la main — c'est ce qui la rend verifiable et reproductible.
+	 */
+	ajustementMoyenne: async ({ request, locals }) => {
+		const admin = requireAdmin(locals);
+		const form = await request.formData();
+		const userId = Number(form.get('userId'));
+		const weekId = Number(form.get('weekId'));
+
+		const player = db.select().from(users).where(eq(users.id, userId)).get();
+		if (!player) return fail(404, { error: 'Joueur introuvable.' });
+		const week = getWeekById(weekId);
+		if (!week) return fail(404, { error: 'Semaine introuvable.' });
+
+		const moyenne = weekAverageWithout(weekId, userId);
+		if (!moyenne) {
+			return fail(400, {
+				error: `Aucun autre joueur n'a marque de points sur ${week.label} : il n'y a rien a moyenner.`
+			});
+		}
+
+		const reason = `Absent — moyenne des autres joueurs (${week.label})`;
+		try {
+			setAdjustment({ userId, weekId, points: moyenne.points, reason, createdBy: admin.id });
+		} catch (err) {
+			return fail(400, { error: (err as Error).message });
+		}
+
+		return {
+			ok:
+				`${player.pseudo} : +${moyenne.points} pts sur ${week.label} — moyenne de ` +
+				`${moyenne.players} joueur(s), ${moyenne.total} pts au total.`
+		};
+	},
+
+	supprimerAjustement: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const form = await request.formData();
+		const ligne = deleteAdjustment(Number(form.get('id')));
+		if (!ligne) return fail(404, { error: 'Ajustement introuvable.' });
+		return { ok: `Ajustement retire : ${ligne.pseudo} / ${ligne.weekLabel}.` };
+	},
+
+	/**
+	 * Restauration depuis l'admin. Rien n'est detruit dans cette requete : la
+	 * sauvegarde est verifiee, la base actuelle est copiee de cote, et le
+	 * remplacement est depose en attente. C'est l'arret du processus, juste
+	 * apres, qui declenche la bascule au redemarrage.
+	 */
+	restaurer: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const form = await request.formData();
+		const fichier = String(form.get('fichier') ?? '');
+		if (form.get('confirmation') !== 'oui') {
+			return fail(400, { error: 'Taper « oui » pour confirmer la restauration.' });
+		}
+
+		let rapport;
+		try {
+			rapport = restoreDatabase(fichier);
+		} catch (err) {
+			return fail(400, { error: `Restauration refusee : ${(err as Error).message}` });
+		}
+
+		// La reponse part d'abord ; l'arret suit. Sous `restart: unless-stopped`
+		// (compose de production), le conteneur redemarre seul et ouvre la base
+		// restauree. Lance a la main, il faut relancer l'application soi-meme.
+		setTimeout(() => process.exit(0), 2000);
+
+		return {
+			ok:
+				`Restauration armee depuis ${rapport.source} (${rapport.inspection.users} joueur(s), ` +
+				`${rapport.inspection.picks} pronostic(s)). La base actuelle est copiee dans ` +
+				`${rapport.safety}. L'application s'arrete dans 2 s et repart sur la sauvegarde ; ` +
+				`recharge la page dans une dizaine de secondes.`
+		};
+	},
+
+	annulerRestauration: async ({ locals }) => {
+		requireAdmin(locals);
+		return cancelPendingRestore()
+			? { ok: 'Restauration en attente annulee : le redemarrage gardera la base actuelle.' }
+			: fail(400, { error: 'Aucune restauration en attente.' });
+	},
+
 	tache: async ({ request, locals }) => {
 		requireAdmin(locals);
 		const form = await request.formData();
@@ -268,13 +403,15 @@ export const actions: Actions = {
 		if (rapport.weeks === 0) return { ok: 'Aucune semaine de presaison a supprimer.' };
 
 		const restants = orphelins();
-		const total = restants.games + restants.picks + restants.scores + restants.odds;
+		const total =
+			restants.games + restants.picks + restants.scores + restants.odds + restants.adjustments;
 
 		return {
 			ok:
 				`Remise a zero : ${rapport.weeks} semaine(s) de presaison (${rapport.labels.join(', ')}), ` +
 				`${rapport.games} match(s), ${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de ` +
-				`points, ${rapport.odds} bareme(s). Les comptes, invitations et reglages sont intacts. ` +
+				`points, ${rapport.odds} bareme(s), ${rapport.adjustments} ajustement(s). ` +
+				`Les comptes, invitations et reglages sont intacts. ` +
 				(total === 0
 					? 'Aucune ligne orpheline.'
 					: `Attention : ${total} ligne(s) orpheline(s) subsistent.`)
@@ -287,12 +424,14 @@ export const actions: Actions = {
 		if (rapport.weeks === 0) return { ok: 'Aucune semaine de test a supprimer.' };
 
 		const restants = orphelins();
-		const total = restants.games + restants.picks + restants.scores + restants.odds;
+		const total =
+			restants.games + restants.picks + restants.scores + restants.odds + restants.adjustments;
 
 		return {
 			ok:
 				`Purge : ${rapport.weeks} semaine(s) (${rapport.labels.join(', ')}), ${rapport.games} match(s), ` +
-				`${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de points, ${rapport.odds} bareme(s). ` +
+				`${rapport.picks} pronostic(s), ${rapport.scores} ligne(s) de points, ${rapport.odds} bareme(s), ` +
+				`${rapport.adjustments} ajustement(s). ` +
 				(total === 0
 					? 'Aucune ligne orpheline.'
 					: `Attention : ${total} ligne(s) orpheline(s) subsistent.`)

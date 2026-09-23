@@ -223,6 +223,38 @@ export const scores = sqliteTable(
 	})
 );
 
+/**
+ * Corrections de points decidees par un admin, hors calcul automatique.
+ *
+ * Volontairement separe de `scores`, qui est reecrit a chaque recalcul : une
+ * ligne posee ici survit au poll, au recalcul de la saison et a la cloture.
+ * Cas d'usage d'origine : un joueur empeche de jouer une journee, a qui la
+ * ligue accorde la moyenne des autres.
+ *
+ * `points` peut etre negatif — une correction va dans les deux sens.
+ */
+export const scoreAdjustments = sqliteTable(
+	'score_adjustments',
+	{
+		id: integer('id').primaryKey({ autoIncrement: true }),
+		userId: integer('user_id')
+			.notNull()
+			.references(() => users.id),
+		weekId: integer('week_id')
+			.notNull()
+			.references(() => weeks.id),
+		points: integer('points').notNull(),
+		/** Motif affiche aux joueurs : un ajustement muet serait une triche. */
+		reason: text('reason').notNull(),
+		createdBy: integer('created_by').references(() => users.id),
+		createdAt: integer('created_at').notNull()
+	},
+	(t) => ({
+		uniq: uniqueIndex('score_adjustments_user_week_uidx').on(t.userId, t.weekId),
+		weekIdx: index('score_adjustments_week_idx').on(t.weekId)
+	})
+);
+
 export const settings = sqliteTable('settings', {
 	key: text('key').primaryKey(),
 	value: text('value').notNull(),
@@ -253,5 +285,6 @@ export type Game = typeof games.$inferSelect;
 export type OddsSnapshot = typeof oddsSnapshots.$inferSelect;
 export type Pick = typeof picks.$inferSelect;
 export type Score = typeof scores.$inferSelect;
+export type ScoreAdjustment = typeof scoreAdjustments.$inferSelect;
 export type Invite = typeof invites.$inferSelect;
 export type CronRun = typeof cronRuns.$inferSelect;

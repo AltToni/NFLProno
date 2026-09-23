@@ -23,6 +23,10 @@
 	function percent(value: number): string {
 		return `${Math.round(value * 100)} %`;
 	}
+
+	// La colonne n'apparait que si elle a quelque chose a dire : dans une saison
+	// sans correction, elle n'ajouterait qu'une colonne de zeros.
+	const ajustements = $derived(rows.some((r) => r.adjustment !== 0));
 </script>
 
 <svelte:head><title>Classement — Pronos NFL</title></svelte:head>
@@ -108,6 +112,7 @@
 					<th class="num">#</th>
 					<th>Joueur</th>
 					<th class="num">Points</th>
+					{#if ajustements}<th class="num">Ajustement</th>{/if}
 					<th class="num">Reussite</th>
 					<th class="num">Ecarts exacts</th>
 				</tr>
@@ -118,6 +123,11 @@
 						<td class="num">{row.rank}</td>
 						<td><a href="/joueur/{row.userId}">{row.pseudo}</a></td>
 						<td class="num"><strong>{row.points}</strong></td>
+						{#if ajustements}
+							<td class="num">
+								{row.adjustment === 0 ? '—' : `${row.adjustment > 0 ? '+' : ''}${row.adjustment}`}
+							</td>
+						{/if}
 						<td class="num">{row.played > 0 ? percent(row.successRate) : '—'}</td>
 						<td class="num">{row.exactMargins}</td>
 					</tr>
@@ -125,6 +135,15 @@
 			</tbody>
 		</table>
 	</div>
+
+	{#if ajustements}
+		<p class="tiny muted" style="margin:0.8rem 0 0">
+			La colonne « Ajustement » est la part du total decidee par un admin plutot que calculee — une
+			absence compensee, par exemple. Elle est comprise dans les points. Le motif de chaque
+			ajustement est visible sur la fiche du joueur. La reussite et les points par match, eux, ne
+			portent que sur des pronostics reellement joues.
+		</p>
+	{/if}
 </details>
 
 <div class="card">

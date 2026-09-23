@@ -37,6 +37,11 @@
 		<div class="kpi">
 			<div class="kpi__label">Points</div>
 			<div class="kpi__value">{data.stats.points}</div>
+			{#if data.stats.adjustmentPoints !== 0}
+				<div class="tiny muted">
+					dont {data.stats.adjustmentPoints > 0 ? '+' : ''}{data.stats.adjustmentPoints} d'ajustement
+				</div>
+			{/if}
 		</div>
 		<div class="kpi">
 			<div class="kpi__label">Taux de reussite</div>
@@ -60,6 +65,28 @@
 			<div class="kpi__value">{data.stats.weeklyWins}</div>
 		</div>
 	</div>
+
+	<!-- Un ajustement est un point compte au classement sans qu'aucun pronostic
+	     lui corresponde : il n'apparaitrait nulle part dans l'historique, d'ou
+	     cet encart. Le taire reviendrait a truquer la fiche. -->
+	{#if data.adjustments.length > 0}
+		<div class="alert alert--warn small" style="margin:0.9rem 0 0">
+			<strong>Ajustements</strong>
+			<ul style="margin:0.4rem 0 0;padding-left:1.1rem">
+				{#each data.adjustments as ajustement (ajustement.id)}
+					<li>
+						{ajustement.weekLabel} :
+						<strong>{ajustement.points > 0 ? '+' : ''}{ajustement.points} pts</strong>
+						— {ajustement.reason}
+					</li>
+				{/each}
+			</ul>
+			<div class="tiny" style="margin-top:0.4rem">
+				Ces points sont compris dans le total et dans le classement. Ils n'entrent pas dans le taux
+				de reussite ni dans les points par match, qui ne portent que sur des matchs pronostiques.
+			</div>
+		</div>
+	{/if}
 
 	{#if data.stats.bestUpset}
 		<div class="alert" style="margin:0.9rem 0 0">

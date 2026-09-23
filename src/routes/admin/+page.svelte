@@ -29,8 +29,24 @@
 	);
 
 	const orphelinsTotal = $derived(
-		data.orphelins.games + data.orphelins.picks + data.orphelins.scores + data.orphelins.odds
+		data.orphelins.games +
+			data.orphelins.picks +
+			data.orphelins.scores +
+			data.orphelins.odds +
+			data.orphelins.adjustments
 	);
+
+	const SAUVEGARDE_ORIGINE = {
+		interne: 'cron interne',
+		nocturne: 'script hote',
+		securite: 'avant restauration'
+	};
+
+	function taille(octets: number): string {
+		return octets >= 1024 * 1024
+			? `${(octets / 1024 / 1024).toFixed(1)} Mo`
+			: `${Math.round(octets / 1024)} Ko`;
+	}
 </script>
 
 <svelte:head><title>Admin — Pronos NFL</title></svelte:head>
@@ -196,14 +212,231 @@
 			<form method="POST" action="?/cloturer" use:enhance>
 				<button class="btn" type="submit">Cloturer les semaines terminees</button>
 			</form>
-			<form method="POST" action="?/sauvegarde" use:enhance>
-				<button class="btn" type="submit">Sauvegarder la base</button>
-			</form>
 		</div>
 		<p class="tiny muted" style="margin:0">
 			Le recalcul est idempotent : il reecrit les points a partir des pronostics et du bareme fige.
 		</p>
 	</div>
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<div class="card">
+	<h2>Ajustements de points</h2>
+	<p class="small muted" style="margin-top:-0.3rem">
+		La seule facon de corriger le total d'un joueur. Les points calcules, eux, ne se modifient pas
+		a la main : ils sont reecrits a partir des pronostics a chaque recalcul, et une valeur forcee y
+		disparaitrait au premier match termine. Un ajustement vit a cote et s'ajoute au total.
+	</p>
+	<p class="tiny muted">
+		Il compte au classement general, au classement de sa semaine et dans le graphe d'evolution. Il
+		n'entre pas dans le taux de reussite ni dans les points par match, qui decrivent des pronostics
+		reellement joues. Le motif est affiche aux joueurs.
+	</p>
+
+	<h3 style="margin-top:1.2rem">Compenser une absence</h3>
+	<form method="POST" action="?/ajustementMoyenne" use:enhance class="row wrap">
+		<select name="userId" aria-label="Joueur a compenser" style="width:auto;min-width:9rem">
+			{#each data.players as player (player.id)}
+				<option value={player.id}>{player.pseudo}</option>
+			{/each}
+		</select>
+		<select name="weekId" aria-label="Semaine concernee" style="width:auto;min-width:11rem">
+			{#each data.weeks as week (week.id)}
+				<option value={week.id}>{week.label}</option>
+			{/each}
+		</select>
+		<button class="btn btn--primary" type="submit">Donner la moyenne des autres</button>
+	</form>
+	<p class="tiny muted" style="margin:0.4rem 0 0">
+		Moyenne des points marques cette semaine-la par les autres joueurs actifs <strong
+			>ayant reellement joue</strong
+		> — un second absent a zero ne tire pas le calcul vers le bas. Les ajustements deja poses sont
+		exclus de la moyenne, pour qu'une compensation n'en nourrisse pas une autre. Resultat arrondi a
+		l'entier le plus proche.
+	</p>
+
+	<h3 style="margin-top:1.3rem">Ajustement libre</h3>
+	<form method="POST" action="?/ajustement" use:enhance class="row wrap">
+		<select name="userId" aria-label="Joueur a ajuster" style="width:auto;min-width:9rem">
+			{#each data.players as player (player.id)}
+				<option value={player.id}>{player.pseudo}</option>
+			{/each}
+		</select>
+		<select name="weekId" aria-label="Semaine de l'ajustement" style="width:auto;min-width:11rem">
+			{#each data.weeks as week (week.id)}
+				<option value={week.id}>{week.label}</option>
+			{/each}
+		</select>
+		<input
+			type="number"
+			name="points"
+			step="1"
+			placeholder="points"
+			style="width:6.5rem"
+			required
+			aria-label="Points, negatifs autorises"
+		/>
+		<input
+			type="text"
+			name="reason"
+			placeholder="motif (affiche aux joueurs)"
+			maxlength="120"
+			style="flex:1;min-width:14rem;text-align:left"
+			required
+			aria-label="Motif de l'ajustement"
+		/>
+		<button class="btn" type="submit">Enregistrer</button>
+	</form>
+	<p class="tiny muted" style="margin:0.4rem 0 0">
+		Les points negatifs sont acceptes. Un joueur ne peut porter qu'un ajustement par semaine :
+		reprendre la meme paire corrige la valeur au lieu d'en ajouter une seconde.
+	</p>
+
+	<h3 style="margin-top:1.3rem">Ajustements en cours</h3>
+	{#if data.adjustments.length === 0}
+		<p class="small muted" style="margin:0">Aucun. Le classement est entierement calcule.</p>
+	{:else}
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Joueur</th>
+						<th>Semaine</th>
+						<th class="num">Points</th>
+						<th>Motif</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.adjustments as ajustement (ajustement.id)}
+						<tr>
+							<td><a href="/joueur/{ajustement.userId}">{ajustement.pseudo}</a></td>
+							<td class="small">{ajustement.weekLabel}</td>
+							<td class="num">
+								<strong>{ajustement.points > 0 ? '+' : ''}{ajustement.points}</strong>
+							</td>
+							<td class="small muted" style="white-space:normal">
+								{ajustement.reason}
+								<div class="tiny">
+									{formatDateTime(ajustement.createdAt)}
+									{ajustement.createdByPseudo ? ` · par ${ajustement.createdByPseudo}` : ''}
+								</div>
+							</td>
+							<td>
+								<form method="POST" action="?/supprimerAjustement" use:enhance>
+									<input type="hidden" name="id" value={ajustement.id} />
+									<button class="btn btn--sm btn--danger" type="submit">Retirer</button>
+								</form>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	{/if}
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<div class="card">
+	<h2>Sauvegardes</h2>
+
+	{#if data.restorePending}
+		<div class="alert alert--warn small">
+			<strong>Une restauration est armee.</strong> Elle sera mise en place au prochain demarrage de
+			l'application. Tant que celui-ci n'a pas eu lieu, la base en service est intacte et
+			l'operation reste annulable.
+			<form method="POST" action="?/annulerRestauration" use:enhance style="margin-top:0.5rem">
+				<button class="btn btn--sm" type="submit">Annuler la restauration</button>
+			</form>
+		</div>
+	{/if}
+
+	<p class="small muted" style="margin-top:-0.3rem">
+		Deux mecanismes ecrivent ici : le cron interne de l'application (quotidien, meme disque) et le
+		script de l'hote (compresse, copie hors machine). Seul le second protege d'une panne disque.
+	</p>
+
+	<div class="row wrap" style="margin-bottom:0.9rem">
+		<form method="POST" action="?/sauvegarde" use:enhance>
+			<button class="btn" type="submit">Sauvegarder maintenant</button>
+		</form>
+		<a class="btn btn--sm" href="/admin/export?format=csv" download>Export CSV</a>
+		<a class="btn btn--sm" href="/admin/export?format=json" download>Export JSON</a>
+	</div>
+	<p class="tiny muted" style="margin:0 0 1rem">
+		L'export est une archive lisible (une ligne par pronostic, ajustements compris), pas une
+		sauvegarde : il ne se restaure pas. Pour restaurer, c'est un fichier <code class="tiny">.db</code
+		> de la liste ci-dessous.
+	</p>
+
+	{#if data.backups.length === 0}
+		<p class="small muted" style="margin:0">
+			Aucune sauvegarde dans <code class="tiny">BACKUP_DIR</code>. La tache quotidienne en cree une
+			a 04:30 ; « Sauvegarder maintenant » en cree une tout de suite.
+		</p>
+	{:else}
+		<div class="table-wrap">
+			<table>
+				<thead>
+					<tr>
+						<th>Fichier</th>
+						<th>Origine</th>
+						<th class="num">Taille</th>
+						<th>Date</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each data.backups as sauvegarde (sauvegarde.name)}
+						<tr>
+							<td class="tiny"><code>{sauvegarde.name}</code></td>
+							<td class="tiny muted">{SAUVEGARDE_ORIGINE[sauvegarde.kind]}</td>
+							<td class="num tiny">{taille(sauvegarde.bytes)}</td>
+							<td class="tiny">{formatDateTime(sauvegarde.modifiedAt)}</td>
+							<td>
+								<a
+									class="btn btn--sm"
+									href="/admin/sauvegardes?fichier={encodeURIComponent(sauvegarde.name)}"
+									download
+								>
+									Telecharger
+								</a>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<h3 style="margin-top:1.3rem">Restaurer</h3>
+		<form method="POST" action="?/restaurer" use:enhance class="row wrap">
+			<select name="fichier" aria-label="Sauvegarde a restaurer" style="flex:1;min-width:16rem">
+				{#each data.backups as sauvegarde (sauvegarde.name)}
+					<option value={sauvegarde.name}>
+						{sauvegarde.name} — {formatDateTime(sauvegarde.modifiedAt)}
+					</option>
+				{/each}
+			</select>
+			<input
+				type="text"
+				name="confirmation"
+				placeholder="taper oui"
+				style="width:7rem"
+				required
+				aria-label="Confirmation : taper oui"
+			/>
+			<button class="btn btn--danger" type="submit">Restaurer</button>
+		</form>
+		<p class="tiny muted" style="margin:0.4rem 0 0">
+			Rien n'est detruit par cette action : la sauvegarde est d'abord verifiee
+			(<code class="tiny">integrity_check</code>, presence de joueurs, version de schema lisible),
+			la base actuelle est copiee dans <code class="tiny">avant-restauration-*.db</code>, puis le
+			remplacement est depose en attente. L'application s'arrete alors, et c'est le demarrage
+			suivant qui bascule — moment ou plus aucune connexion ne tient la base. En production
+			(<code class="tiny">restart: unless-stopped</code>) le conteneur repart seul ; demarree a la
+			main, l'application doit etre relancee a la main.
+		</p>
+	{/if}
 </div>
 
 <!-- ------------------------------------------------------------------ -->
@@ -371,7 +604,7 @@
 		<div class="alert alert--error small" style="margin:0.9rem 0 0">
 			{orphelinsTotal} ligne(s) orpheline(s) en base : {data.orphelins.games} match(s),
 			{data.orphelins.picks} pronostic(s), {data.orphelins.scores} ligne(s) de points,
-			{data.orphelins.odds} bareme(s) sans parent.
+			{data.orphelins.odds} bareme(s), {data.orphelins.adjustments} ajustement(s) sans parent.
 		</div>
 	{/if}
 </div>

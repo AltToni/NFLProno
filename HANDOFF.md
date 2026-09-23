@@ -49,7 +49,9 @@ comportement en charge. Voir §3.
 | Pronostics + verrouillage | `src/lib/server/picks.ts` | Contrôle serveur au kickoff |
 | Auth | `src/lib/server/auth.ts` | Invitations, magic links, sessions, jetons HMAC |
 | Crons | `src/lib/server/cron.ts` | 5 tâches, journal, relance manuelle |
-| Sauvegardes | `src/lib/server/backup.ts` | `VACUUM INTO` + rotation |
+| Sauvegardes | `src/lib/server/backup.ts` | `VACUUM INTO` + rotation, inventaire, restauration différée |
+| Ajustements de points | `src/lib/server/adjustments.ts` | Corrections admin, hors recalcul |
+| Export saison | `src/lib/server/export.ts` | Archive JSON / CSV, non restaurable |
 | Écrans | `src/routes/` | Connexion, pronostics, match, classement, profil, admin |
 | Conteneurisation | `Dockerfile`, `docker-compose.yml` | Multi-stage, healthcheck, volumes |
 
@@ -102,6 +104,27 @@ Par ordre de criticité.
 - Sauvegarde nocturne hôte + restauration, aller-retour testé à chaque push.
 - En-têtes de sécurité, logs structurés, page admin « état du système ».
 
+### Fait le 23/09/2026 (ajustements de points et sauvegardes dans l'admin)
+
+- **Ajustements de points** (`score_adjustments`, migration v5). Il n'existait
+  aucun moyen de corriger le total d'un joueur : `scores` est réécrit à chaque
+  recalcul, donc toute valeur forcée y disparaissait au premier match terminé.
+  Les ajustements vivent à côté et s'ajoutent au classement. Le cas d'origine —
+  un joueur empêché de jouer la journée 1 — a son bouton dédié qui calcule la
+  moyenne des autres plutôt que de la faire saisir. Motif obligatoire et affiché
+  aux joueurs ; hors taux de réussite et points par match, qui ne décrivent que
+  des pronostics réellement joués.
+- **Sauvegardes dans l'admin** : inventaire des deux emplacements (cron interne
+  et script hôte, `.db.gz` compris), téléchargement, et restauration avec
+  confirmation. La restauration est **différée** — la requête vérifie, met la
+  base de côté et dépose le remplacement ; c'est le démarrage suivant qui
+  bascule, seul instant où aucune connexion ne tient la base. Annulable tant que
+  le redémarrage n'a pas eu lieu.
+- **Export JSON / CSV** de la saison, archive lisible et non restaurable.
+- Corrigé au passage : deux sauvegardes dans la même seconde se marchaient
+  dessus (`VACUUM INTO` échoue sur un fichier existant). Les noms horodatés
+  prennent désormais un suffixe numérique si besoin.
+
 ### Avant l'ouverture aux joueurs
 
 1. **SMTP configuré et magic link testé de bout en bout.** Seul le mode « lien
@@ -110,7 +133,8 @@ Par ordre de criticité.
    Tant qu'il est vide, les sauvegardes restent sur le même disque que la base
    et ne protègent de rien.
 3. **Une restauration réelle sur la machine de production**, une fois, à froid.
-   Le round-trip est testé en CI, jamais sur la vraie machine.
+   Le round-trip est testé en CI (script hôte) et par `backup.test.ts` (chemin
+   admin), jamais sur la vraie machine.
 4. Icônes PNG réelles pour la PWA (actuellement SVG uniquement).
 5. Durée de validité du jeton de rappel email (voir §5, piège n°6).
 

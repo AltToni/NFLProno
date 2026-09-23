@@ -79,12 +79,20 @@ export interface StandingRow {
 	userId: number;
 	pseudo: string;
 	avatar: string | null;
+	/** Total qui classe : points calcules + ajustements admin. */
 	points: number;
+	/** Part venant d'un ajustement admin, 0 dans le cas normal. */
+	adjustment: number;
 	exactMargins: number;
 	corrects: number;
 	played: number;
 	rank: number;
 	successRate: number;
+	/**
+	 * Reussite et moyenne portent sur les matchs reellement pronostiques : un
+	 * ajustement n'entre ni dans l'une ni dans l'autre. Pour un joueur ajuste,
+	 * `points` n'est donc pas egal a `averagePoints x played`.
+	 */
 	averagePoints: number;
 }
 

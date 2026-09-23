@@ -1,4 +1,4 @@
-import { migrationsApplied, DATABASE_PATH } from './db';
+import { migrationsApplied, restoreApplied, DATABASE_PATH } from './db';
 import { seedSettings } from './settings';
 import { ensureBootstrapAdmin, purgeExpired } from './auth';
 import { startCron } from './cron';
@@ -12,6 +12,9 @@ export function boot(): void {
 	if (booted) return;
 	booted = true;
 
+	if (restoreApplied) {
+		logger.warn(`Restauration appliquee au demarrage : ${DATABASE_PATH} remplace par la sauvegarde.`);
+	}
 	logger.info(`Base SQLite : ${DATABASE_PATH} (${migrationsApplied} migration(s) appliquee(s))`);
 	seedSettings();
 	ensureBootstrapAdmin();

@@ -192,13 +192,14 @@ describe('purgePreseasonWeeks', () => {
 	});
 
 	it('ne laisse aucune ligne orpheline et est idempotente', () => {
-		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0 });
+		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0, adjustments: 0 });
 		expect(m.presaison.purgePreseasonWeeks()).toEqual({
 			weeks: 0,
 			games: 0,
 			picks: 0,
 			scores: 0,
 			odds: 0,
+			adjustments: 0,
 			labels: []
 		});
 	});
