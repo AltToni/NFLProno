@@ -375,7 +375,9 @@ src/
       standings.ts        classements, evolution des rangs, stats joueur
       picks.ts            lecture/ecriture des pronostics, verrouillage
       auth.ts, mail.ts    invitations, magic links, sessions, SMTP
-      cron.ts, backup.ts  ordonnanceur et sauvegardes
+      cron.ts, backup.ts  ordonnanceur, sauvegardes, restauration differee
+      adjustments.ts      corrections de points decidees par un admin
+      export.ts           export JSON / CSV lisible de la saison
       home.ts             donnees de l'accueil (activite, resultats, recap)
       testing.ts          semaines de test (rejeu, simulation)
       presaison.ts        inventaire et remise a zero de la presaison
@@ -588,16 +590,71 @@ sudo $EDITOR /etc/systemd/system/nflprono-backup.service   # renseigner REMOTE_T
 sudo systemctl enable --now nflprono-backup.timer
 ```
 
-Restauration — **ne pas copier le fichier a la main** : `nfl.db-wal` et
-`nfl.db-shm` doivent disparaitre avec la base, sinon SQLite rejoue par-dessus
-un journal qui ne lui correspond plus.
+L'admin (`/admin` → Sauvegardes) liste les deux emplacements, indique l'origine
+de chaque fichier et permet de le **telecharger** — le seul moyen d'en sortir
+une copie sans acces SSH. C'est aussi la qu'on declenche une sauvegarde
+immediate.
+
+#### « Derniere sauvegarde : probleme / jamais »
+
+L'indicateur nomme la cause et affiche le **chemin absolu** reellement
+consulte. Trois cas, qui ne se reparent pas de la meme façon :
+
+| Detail affiche | Ce qui se passe |
+|---|---|
+| `repertoire vide : <chemin>` | Rien d'anormal sur une installation neuve : le cron passe à 04:30. « Sauvegarder maintenant » tranche tout de suite. |
+| `repertoire non inscriptible : <chemin>` | La cause la plus frequente. Le conteneur ecrit en **uid 1000**, et `docker compose up` cree un repertoire de bind mount manquant **en root** : `./backup` lui est alors ferme, et aucune sauvegarde n'a jamais pu s'ecrire. |
+| `repertoire absent : <chemin>` | Le volume n'est pas monte. Verifier le montage `./backup:/backup` et la variable `BACKUP_DIR`. |
+
+Le second cas se corrige depuis l'hote, la commande est rappelee dans l'admin :
+
+```bash
+sudo chown 1000:1000 backup
+```
+
+C'est exactement le `mkdir -p backup && sudo chown 1000:1000 backup` de la
+premiere installation : saute une fois, il ne se rattrape pas tout seul.
+
+#### Restauration
+
+**Ne jamais copier le fichier a la main** : `nfl.db-wal` et `nfl.db-shm`
+doivent disparaitre avec la base, sinon SQLite rejoue par-dessus un journal qui
+ne lui correspond plus. C'est le piege classique du mode WAL. Les deux chemins
+ci-dessous s'en chargent.
+
+**Depuis le serveur**, la voie de reference, qui sait aussi gerer le conteneur :
 
 ```bash
 scripts/restore.sh --latest
 ```
 
-Le script verifie l'integrite de la sauvegarde avant de toucher a quoi que ce
-soit et met la base courante de cote. L'aller-retour est teste a chaque push.
+**Depuis l'interface**, `/admin` → Sauvegardes → « Restaurer » (confirmation à
+taper). La requete ne detruit rien : elle verifie la sauvegarde, met la base
+actuelle de cote, et depose le remplacement en attente sous
+`nfl.db.restaurer`. L'application s'arrete alors, et c'est le **demarrage
+suivant** qui bascule — le seul instant ou aucune connexion ne tient la base.
+Fermer la connexion SQLite en pleine requete casserait le rechargement de la
+page, la session lue par les hooks et ce que le cron ferait au meme moment.
+
+Tant que le redemarrage n'a pas eu lieu, l'operation reste annulable
+(« Annuler la restauration »). En production (`restart: unless-stopped`) le
+conteneur repart seul ; lancee à la main, l'application doit etre relancee à la
+main.
+
+Les deux chemins verifient la sauvegarde **avant** de toucher à quoi que ce
+soit — `integrity_check`, presence de joueurs, version de schema lisible — et
+copient la base courante dans `avant-restauration-*.db`. Une restauration qui
+remplace la base saine par une copie corrompue ne vaut rien, et c'est le
+dernier moment ou on peut encore refuser. L'aller-retour est teste à chaque
+push (`src/lib/server/backup.test.ts` + le job CI).
+
+#### Export lisible
+
+`/admin` → Sauvegardes → Export CSV / JSON. Ce n'est **pas** une sauvegarde :
+rien ne s'en restaure. C'est l'archive qu'on garde une fois la saison finie, ou
+qu'on ouvre dans un tableur. Le CSV est à plat, une ligne par pronostic, avec
+les ajustements en lignes `type = ajustement` : sommer la colonne « points »
+d'un joueur redonne son total au classement.
 
 ### Securite
 
@@ -634,6 +691,11 @@ chaque intersaison.
 | Relancer un snapshot | `/admin` → Actions manuelles (numero de semaine optionnel) |
 | Corriger un score | `/admin/matchs` |
 | Recalculer tous les points | `/admin` → « Recalculer tous les points » |
+| Corriger les points d'un joueur | `/admin` → Ajustements de points |
+| Compenser une absence | `/admin` → « Donner la moyenne des autres » |
+| Telecharger une sauvegarde | `/admin` → Sauvegardes |
+| Restaurer depuis l'interface | `/admin` → Sauvegardes → « Restaurer » |
+| Archiver la saison (tableur) | `/admin` → Sauvegardes → Export CSV / JSON |
 | Changer une constante du barème | `/admin` → Reglages, puis recalcul |
 | Voir l'etat des crons | `/admin` → Taches planifiees + Journal |
 | Rejouer une semaine passee | `/admin` → Outils de test |
@@ -644,6 +706,56 @@ chaque intersaison.
 Avant le coup d'envoi de la saison : figer les reglages du barème, lancer un
 snapshot de test sur la semaine 1, verifier les enjeux affiches, puis remettre
 les pronostics à zero si besoin.
+
+### Ajustements de points
+
+C'est la seule façon de corriger le total d'un joueur. Les points calcules, eux,
+ne se modifient pas à la main : `computeGameScores` **vide et reecrit** les
+lignes `scores` d'un match à chaque passage, et le poll tourne toutes les
+quinze minutes. Une valeur forcee dans `scores` disparaitrait au premier match
+termine, sans bruit et sans que personne le remarque avant le classement final.
+
+Un ajustement vit donc dans sa propre table (`score_adjustments`) et s'ajoute au
+total au moment de construire le classement. Il survit au poll, au recalcul de
+la saison et à la cloture.
+
+| | |
+|---|---|
+| Ou | `/admin` → Ajustements de points |
+| Unicite | une ligne au plus par joueur et par semaine ; reprendre la meme paire corrige la valeur |
+| Signe | positif ou negatif |
+| Motif | obligatoire, et **affiche aux joueurs** sur la fiche du joueur |
+| Compte dans | classement general, classement de la semaine, graphe d'evolution |
+| Ne compte pas dans | taux de reussite, points par match, ecarts exacts |
+
+Cette derniere ligne est un choix : la reussite et la moyenne decrivent des
+pronostics reellement joues. Les gonfler avec une compensation d'absence leur
+ferait dire quelque chose de faux. Consequence assumee — pour un joueur ajuste,
+`points ≠ moyenne × matchs joues`.
+
+Le **vainqueur de la semaine** se lit sur le classement hebdomadaire, donc sur
+des points ajustes : le crowned et le premier du tableau ne peuvent pas se
+contredire. Une compensation d'absence ne peut pas faire gagner une semaine —
+`weekWinner` ecarte les joueurs à zero match joue, ce qui est exactement le cas
+de l'absent. Deux limites à connaitre : `weeks.winner_user_id` est **fige à la
+cloture**, donc un ajustement pose apres coup ne le redesigne pas (c'est deja
+vrai d'un recalcul) ; et un ajustement sur un joueur desactive n'apparait nulle
+part, les classements ne retenant que les comptes actifs.
+
+**Compenser une absence.** Le bouton « Donner la moyenne des autres » calcule la
+moyenne plutot que de la faire saisir, ce qui la rend verifiable et
+reproductible. Deux regles dans ce calcul :
+
+- seuls les joueurs actifs **ayant reellement joue** la semaine entrent dans la
+  moyenne — compter un second absent à zero la tirerait vers le bas sans raison ;
+- les ajustements deja poses en sont **exclus**, sans quoi compenser un deuxième
+  absent ferait boule de neige.
+
+Le resultat est arrondi à l'entier le plus proche. S'il n'y a rien à moyenner
+(personne n'a marque cette semaine-là), l'action refuse plutot que d'ecrire 0 —
+zero serait un resultat, pas une absence de resultat.
+
+Une purge de semaine (test ou presaison) emporte les ajustements qui la visaient.
 
 ### Presaison
 
@@ -790,7 +902,7 @@ semaines ne sont pas touchees.
 ## 8. Tests
 
 ```bash
-npm test          # suite complete (123 tests)
+npm test          # suite complete (175 tests)
 npm run test:watch
 npm run check     # svelte-check / TypeScript
 
@@ -840,7 +952,7 @@ banal et tomber pile. La coherence de saisie est testee de bout en bout : ecart
 ≥ 1 avec equipe, ecart 0 sans equipe, borne haute, et le refus de tout le
 reste.
 
-Deux suites sortent du pur calcul :
+Cinq suites sortent du pur calcul :
 
 - `db/migrate.test.ts` rejoue la montee de version sur une base **deja en v1**
   et peuplee, pas seulement sur une base vierge : c'est le chemin qu'empruntera
@@ -855,6 +967,23 @@ Deux suites sortent du pur calcul :
   ligne orpheline** et n'entame pas la vraie semaine posee a cote. Un pronostic
   y traverse toute la chaine, de la saisie jusqu'a la ligne de points, nul
   predit sans equipe inclus.
+- `adjustments.test.ts` pose la question qui a fait naitre la table : un joueur
+  absent recoit-il la moyenne des autres, et cette correction **survit-elle au
+  recalcul** ? Le recalcul y est reellement declenche, celui qui vide `scores`
+  et le reecrit. La moyenne est verifiee sur ses deux pieges — un compte
+  desactive n'y entre pas, un second absent n'y compte pas comme un zero — et
+  l'isolement des statistiques de performance est fixe noir sur blanc : points
+  du joueur ajuste à 75, reussite et moyenne à 0.
+- `backup.test.ts` fait l'**aller-retour** : sauvegarder, modifier la base,
+  restaurer, retrouver l'etat sauvegarde. Une sauvegarde dont on n'a jamais
+  verifie qu'elle se restaure n'est pas une sauvegarde, c'est un fichier. Les
+  deux garde-fous y ont leur test — refus d'un fichier corrompu, refus d'une
+  base SQLite valide mais vide de joueurs (le cas pernicieux : elle passe
+  `integrity_check` et pourtant la restaurer effacerait la ligue) — ainsi que
+  le refus d'un chemin sortant de `BACKUP_DIR`.
+- `export.test.ts` fixe la propriete qui rend l'archive fiable : sommer la
+  colonne « points » d'un joueur dans le CSV redonne exactement son total au
+  classement, ajustements compris.
 
 ---
 

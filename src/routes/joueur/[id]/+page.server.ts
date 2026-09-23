@@ -3,6 +3,7 @@ import type { PageServerLoad } from './$types';
 import { requireUser } from '$lib/server/guards';
 import { findUserById } from '$lib/server/auth';
 import { playerHistory, playerStats, seasonStandings } from '$lib/server/standings';
+import { playerAdjustments } from '$lib/server/adjustments';
 
 export const load: PageServerLoad = async ({ locals, params }) => {
 	requireUser(locals);
@@ -19,6 +20,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		rank,
 		total: standings.length,
 		stats: playerStats(player.id),
-		history: playerHistory(player.id)
+		history: playerHistory(player.id),
+		adjustments: playerAdjustments(player.id)
 	};
 };

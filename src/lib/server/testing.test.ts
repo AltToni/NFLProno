@@ -416,7 +416,7 @@ describe('purgeTestWeeks', () => {
 	});
 
 	it('ne laisse aucune ligne orpheline', () => {
-		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0 });
+		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0, adjustments: 0 });
 	});
 
 	it('ne laisse aucune trace des fixtures dans les tables', () => {
@@ -451,9 +451,10 @@ describe('purgeTestWeeks', () => {
 			picks: 0,
 			scores: 0,
 			odds: 0,
+			adjustments: 0,
 			labels: []
 		});
-		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0 });
+		expect(m.testing.orphelins()).toEqual({ games: 0, picks: 0, scores: 0, odds: 0, adjustments: 0 });
 	});
 
 	it('libere le numero pour une nouvelle semaine de test', () => {

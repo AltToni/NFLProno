@@ -4,17 +4,39 @@ import type { EvolutionPoint, EvolutionSeries, StandingRow } from '$lib/types';
 
 export type { EvolutionPoint, EvolutionSeries, StandingRow } from '$lib/types';
 
+/** Ce que renvoient les requetes ci-dessous, avant totalisation et classement. */
+interface RawRow {
+	userId: number;
+	pseudo: string;
+	avatar: string | null;
+	/** Points issus du calcul automatique, hors ajustement. */
+	scorePoints: number;
+	adjustment: number;
+	exactMargins: number;
+	corrects: number;
+	played: number;
+}
+
 /**
  * Departage a egalite (spec 4) : points, puis nombre d'ecarts exacts. Les ex
  * aequo parfaits partagent le meme rang.
+ *
+ * Les ajustements entrent dans `points` — c'est bien le total qui classe — mais
+ * pas dans `successRate` ni dans `averagePoints`. Ces deux-la decrivent une
+ * performance sur des matchs reellement pronostiques : les gonfler avec une
+ * compensation d'absence leur ferait dire quelque chose de faux. Consequence
+ * assumee : pour un joueur ajuste, `points` n'est plus egal a
+ * `averagePoints x played`.
  */
-function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoints'>[]): StandingRow[] {
-	const sorted = [...rows].sort(
-		(a, b) =>
-			b.points - a.points ||
-			b.exactMargins - a.exactMargins ||
-			a.pseudo.localeCompare(b.pseudo, 'fr')
-	);
+function rankRows(rows: RawRow[]): StandingRow[] {
+	const sorted = rows
+		.map((row) => ({ ...row, points: row.scorePoints + row.adjustment }))
+		.sort(
+			(a, b) =>
+				b.points - a.points ||
+				b.exactMargins - a.exactMargins ||
+				a.pseudo.localeCompare(b.pseudo, 'fr')
+		);
 
 	let lastRank = 0;
 	let lastKey = '';
@@ -25,10 +47,17 @@ function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoint
 			lastKey = key;
 		}
 		return {
-			...row,
+			userId: row.userId,
+			pseudo: row.pseudo,
+			avatar: row.avatar,
+			points: row.points,
+			adjustment: row.adjustment,
+			exactMargins: row.exactMargins,
+			corrects: row.corrects,
+			played: row.played,
 			rank: lastRank,
 			successRate: row.played > 0 ? row.corrects / row.played : 0,
-			averagePoints: row.played > 0 ? row.points / row.played : 0
+			averagePoints: row.played > 0 ? row.scorePoints / row.played : 0
 		};
 	});
 }
@@ -40,12 +69,22 @@ function rankRows(rows: Omit<StandingRow, 'rank' | 'successRate' | 'averagePoint
  * il porte sur une semaine designee, et c'est justement la qu'on va verifier
  * que le rejeu a bien calcule ses points.
  */
+/**
+ * Les ajustements passent par une sous-requete correlee plutot qu'une seconde
+ * jointure : jointe a `scores`, la table multiplierait les lignes avant le
+ * GROUP BY et fausserait toutes les sommes.
+ */
 const SEASON_STANDINGS = `
 	SELECT u.id AS userId, u.pseudo, u.avatar,
-		COALESCE(SUM(s.points), 0)       AS points,
+		COALESCE(SUM(s.points), 0)       AS scorePoints,
 		COALESCE(SUM(s.exact_margin), 0) AS exactMargins,
 		COALESCE(SUM(s.correct), 0)      AS corrects,
-		COUNT(s.id)                      AS played
+		COUNT(s.id)                      AS played,
+		COALESCE((
+			SELECT SUM(a.points) FROM score_adjustments a
+			WHERE a.user_id = u.id
+			  AND a.week_id IN (SELECT id FROM weeks WHERE season = @season AND test_kind IS NULL)
+		), 0)                            AS adjustment
 	FROM users u
 	LEFT JOIN scores s
 		ON s.user_id = u.id
@@ -56,10 +95,14 @@ const SEASON_STANDINGS = `
 
 const WEEK_STANDINGS = `
 	SELECT u.id AS userId, u.pseudo, u.avatar,
-		COALESCE(SUM(s.points), 0)       AS points,
+		COALESCE(SUM(s.points), 0)       AS scorePoints,
 		COALESCE(SUM(s.exact_margin), 0) AS exactMargins,
 		COALESCE(SUM(s.correct), 0)      AS corrects,
-		COUNT(s.id)                      AS played
+		COUNT(s.id)                      AS played,
+		COALESCE((
+			SELECT SUM(a.points) FROM score_adjustments a
+			WHERE a.user_id = u.id AND a.week_id = @weekId
+		), 0)                            AS adjustment
 	FROM users u
 	LEFT JOIN scores s ON s.user_id = u.id AND s.week_id = @weekId
 	WHERE u.active = 1
@@ -67,13 +110,11 @@ const WEEK_STANDINGS = `
 `;
 
 export function seasonStandings(season = currentSeason()): StandingRow[] {
-	const rows = sqlite.prepare(SEASON_STANDINGS).all({ season }) as any[];
-	return rankRows(rows);
+	return rankRows(sqlite.prepare(SEASON_STANDINGS).all({ season }) as RawRow[]);
 }
 
 export function weekStandings(weekId: number): StandingRow[] {
-	const rows = sqlite.prepare(WEEK_STANDINGS).all({ weekId }) as any[];
-	return rankRows(rows);
+	return rankRows(sqlite.prepare(WEEK_STANDINGS).all({ weekId }) as RawRow[]);
 }
 
 /** Vainqueur d'une semaine, ou null en cas d'ex aequo strict ou d'absence de points. */
@@ -106,6 +147,8 @@ export function rankEvolution(season = currentSeason()): {
 		.prepare(`SELECT id, pseudo FROM users WHERE active = 1 ORDER BY pseudo COLLATE NOCASE`)
 		.all() as { id: number; pseudo: string }[];
 
+	type WeekDelta = { weekId: number; userId: number; points: number; exactMargins: number };
+
 	const perWeek = sqlite
 		.prepare(
 			`SELECT s.week_id AS weekId, s.user_id AS userId,
@@ -116,18 +159,34 @@ export function rankEvolution(season = currentSeason()): {
 			 WHERE w.season = @season AND w.test_kind IS NULL
 			 GROUP BY s.week_id, s.user_id`
 		)
-		.all({ season }) as {
-		weekId: number;
-		userId: number;
-		points: number;
-		exactMargins: number;
-	}[];
+		.all({ season }) as WeekDelta[];
 
-	const byWeek = new Map<number, Map<number, (typeof perWeek)[number]>>();
-	for (const row of perWeek) {
-		if (!byWeek.has(row.weekId)) byWeek.set(row.weekId, new Map());
-		byWeek.get(row.weekId)!.set(row.userId, row);
-	}
+	// Les ajustements font partie de la courbe : sans eux, le rang trace ici
+	// divergerait du classement general affiche juste au-dessus.
+	const perWeekAdjustments = sqlite
+		.prepare(
+			`SELECT a.week_id AS weekId, a.user_id AS userId, SUM(a.points) AS points
+			 FROM score_adjustments a
+			 JOIN weeks w ON w.id = a.week_id
+			 WHERE w.season = @season AND w.test_kind IS NULL
+			 GROUP BY a.week_id, a.user_id`
+		)
+		.all({ season }) as { weekId: number; userId: number; points: number }[];
+
+	const byWeek = new Map<number, Map<number, { points: number; exactMargins: number }>>();
+	const cumule = (weekId: number, userId: number, points: number, exactMargins: number) => {
+		if (!byWeek.has(weekId)) byWeek.set(weekId, new Map());
+		const semaine = byWeek.get(weekId)!;
+		const acc = semaine.get(userId) ?? { points: 0, exactMargins: 0 };
+		semaine.set(userId, {
+			points: acc.points + points,
+			exactMargins: acc.exactMargins + exactMargins
+		});
+	};
+
+	for (const row of perWeek) cumule(row.weekId, row.userId, row.points, row.exactMargins);
+	// Un ajustement ne cree pas d'ecart exact : il n'y a pas eu de pronostic.
+	for (const row of perWeekAdjustments) cumule(row.weekId, row.userId, row.points, 0);
 
 	const cumulative = new Map<number, { points: number; exactMargins: number }>();
 	for (const u of users) cumulative.set(u.id, { points: 0, exactMargins: 0 });
@@ -184,7 +243,10 @@ export function rankEvolution(season = currentSeason()): {
 }
 
 export interface PlayerStats {
+	/** Total qui classe : points calcules + ajustements. */
 	points: number;
+	/** Part des points venant d'un ajustement admin (0 pour presque tout le monde). */
+	adjustmentPoints: number;
 	played: number;
 	corrects: number;
 	exactMargins: number;
@@ -211,6 +273,15 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 			 WHERE s.user_id = @userId AND w.season = @season AND w.test_kind IS NULL`
 		)
 		.get({ userId, season }) as any;
+
+	const ajustement = sqlite
+		.prepare(
+			`SELECT COALESCE(SUM(a.points), 0) AS points
+			 FROM score_adjustments a
+			 JOIN weeks w ON w.id = a.week_id
+			 WHERE a.user_id = @userId AND w.season = @season AND w.test_kind IS NULL`
+		)
+		.get({ userId, season }) as { points: number };
 
 	// `pick_side IS NOT NULL` ecarte le nul predit, qui ne designe aucune equipe :
 	// aucune probabilite ne lui correspond, il n'a donc pas sa place dans le
@@ -241,11 +312,13 @@ export function playerStats(userId: number, season = currentSeason()): PlayerSta
 		.get({ userId, season }) as { n: number };
 
 	return {
-		points: agg?.points ?? 0,
+		points: (agg?.points ?? 0) + (ajustement?.points ?? 0),
+		adjustmentPoints: ajustement?.points ?? 0,
 		played: agg?.played ?? 0,
 		corrects: agg?.corrects ?? 0,
 		exactMargins: agg?.exactMargins ?? 0,
 		successRate: agg?.played > 0 ? agg.corrects / agg.played : 0,
+		// Points par match pronostique : l'ajustement n'en est pas un.
 		averagePoints: agg?.played > 0 ? agg.points / agg.played : 0,
 		bestUpset: upset
 			? {
